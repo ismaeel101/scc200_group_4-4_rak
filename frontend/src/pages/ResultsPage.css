@@ -1,0 +1,549 @@
+.resultspage {
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+  color: #0f172a;
+  padding: 2rem 1rem;
+  background: linear-gradient(180deg, rgba(241, 245, 249, 1) 0%, rgba(246, 249, 252, 1) 100%);
+  min-height: calc(100vh - 64px);
+}
+
+.resultspage__container {
+  max-width: 1400px;
+  width: min(96%, 1400px);
+  margin: 0 auto;
+  padding: 0 12px;
+}
+
+.resultspage__title {
+  font-size: 1.9rem;
+  margin: 0 0 1rem 0;
+  font-weight: 900;
+  text-align: left;
+  color: #071033;
+}
+
+
+.resultspage__grid {
+  display: flex;
+  gap: clamp(16px, 4vw, 56px);
+  align-items: flex-start;
+}
+
+.resultspage__left {
+  /* flexible sidebar that scales with viewport while keeping sensible bounds */
+  width: min(30%, 420px);
+  min-width: 260px;
+  max-width: 420px;
+  flex: 0 0 auto;
+}
+
+.resultspage__right {
+  flex: 1 1 0%;
+  min-width: 0;
+  /* allow children to shrink correctly inside flex */
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.card {
+  background: rgba(255, 255, 255, 0.88);
+  border-radius: 12px;
+  padding: 20px;
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  box-shadow: 0 6px 18px rgba(2, 6, 23, 0.035);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+}
+
+.journey-options .card__title,
+.map-card .card__title,
+.breakdown-card .card__title {
+  margin: 0 0 0.6rem 0;
+  font-size: 1.12rem;
+  font-weight: 600;
+  color: #071033;
+}
+
+/* Journey Options header (left column top box) */
+.journey-options {
+  background: rgba(255, 255, 255, 0.98);
+  border-radius: 16px;
+  padding: 18px;
+  box-shadow: 0 4px 12px rgba(2, 6, 23, 0.03);
+  border: 1px solid rgba(15, 23, 42, 0.04);
+}
+
+.journey-options .card__title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #334155;
+  margin-bottom: 8px;
+}
+
+.journey-options .route-summary {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #0f172a;
+  margin-top: 4px;
+}
+
+
+
+.routes-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  /* tightened further to reduce vertical whitespace between cards */
+}
+
+.route-card {
+  background: #ffffff;
+  border: 1px solid #e6e9ee;
+  /* subtle gray-200 */
+  border-radius: 16px;
+  /* rounded-xl */
+  padding: 4px 6px;
+  /* slightly less padding to reduce card height */
+  transition: transform 200ms ease, box-shadow 200ms ease, border-color 200ms ease, background-color 200ms ease;
+  box-shadow: 0 5px 12px rgba(2, 6, 23, 0.035);
+  /* slightly softer */
+  color: #071033;
+}
+
+.route-card:hover {
+  box-shadow: 0 12px 30px rgba(2, 6, 23, 0.06);
+  background-color: #ffffff;
+}
+
+.route-card--selected {
+  background: #eff6ff;
+  border: 2px solid #2563eb;
+  /* clear blue border and subtle blue background tint */
+  box-shadow: 0 10px 28px rgba(37, 99, 235, 0.06);
+  transition: box-shadow 200ms ease, border-color 200ms ease, background-color 200ms ease;
+}
+
+.route-card__main {
+  display: flex;
+  flex-direction: column;
+  /* times on top, meta beneath */
+  align-items: stretch;
+  gap: 1px;
+  /* minimal gap to tighten vertical rhythm */
+}
+
+.route-times {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  /* slightly tighter time arrow spacing */
+  width: 100%;
+}
+
+.route-times .time {
+  font-size: clamp(1.1rem, 2.4vw, 1.75rem);
+  /* responsive sizing while preserving weight and color */
+  font-weight: 600;
+  /* semibold */
+  color: #071033;
+  line-height: 1;
+}
+
+.time-arrow {
+  display: inline-flex;
+  align-items: center;
+  color: #8b97a6;
+}
+
+.route-meta {
+  display: flex;
+  flex-direction: row;
+  /* duration and changes combined on one line */
+  align-items: center;
+  gap: 0px;
+  /* bring items closer together */
+  color: #6b7280;
+  /* keep existing muted grey */
+  font-weight: 500;
+  /* medium */
+  font-size: 1rem;
+  /* text-base */
+  margin-top: 0px;
+  /* sit closer under the times */
+}
+
+.route-meta .duration {
+  color: #6b7280;
+  font-weight: 600;
+  /* medium */
+}
+
+.route-meta .changes {
+  color: #6b7280;
+  font-weight: 600;
+}
+
+.route-meta .changes::before {
+  content: '\00B7';
+  margin: 0 1px 0 1px;
+  /* larger and tighter separator */
+  font-size: 1.3rem;
+  line-height: 1;
+  color: #6b7280;
+}
+
+/* Add a faint line under the Journey Breakdown title */
+.breakdown-card .card__title {
+  border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+  padding-bottom: 6px;
+}
+
+.route-card__foot {
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+  margin-top: 1px;
+  /* reduce space between duration and transport row */
+  border-top: 1px solid #f3f4f6;
+  padding-top: 1px;
+}
+
+.route-card__foot-left {
+  display: flex;
+  flex-direction: column;
+  /* lines on top, details link below */
+  align-items: flex-start;
+  gap: 4px;
+  flex: 1 1 auto;
+}
+
+.lines {
+  display: flex;
+  gap: 4px;
+  /* slightly tighter */
+  align-items: center;
+}
+
+.line {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.line-badge {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  background: #1e293b;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #ffffff;
+  flex: 0 0 38px;
+}
+
+.line-badge svg {
+  width: 16px;
+  height: 16px;
+}
+
+.line-label {
+  font-weight: 700;
+  color: #0f172a;
+  font-size: 0.95rem;
+}
+
+.connect-arrow {
+  display: inline-flex;
+  align-items: center;
+  color: #9ca3af;
+  margin: 0 6px;
+}
+
+.right {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+}
+
+.details {
+  background: transparent;
+  color: #2563eb;
+  font-weight: 600;
+  font-size: 0.95rem;
+  border: none;
+  padding: 4px 6px;
+  cursor: pointer;
+  margin-left: 6px;
+}
+
+.badge {
+  padding: 8px 12px;
+  border-radius: 999px;
+  font-weight: 800;
+  font-size: 14px;
+  display: inline-block;
+  border: none;
+}
+
+.badge--high {
+  background: #d1fae5;
+  /* soft green bg */
+  color: #065f46;
+  /* darker green text */
+}
+
+.badge--medium {
+  background: #ffedd5;
+  /* soft amber bg */
+  color: #92400e;
+  /* darker amber text */
+}
+
+.badge--low {
+  background: #fee2e2;
+  /* soft red bg */
+  color: #991B1B;
+  /* darker red text */
+}
+
+/* position reliability badge in top-right of card visually */
+.route-card {
+  position: relative;
+}
+
+.route-card .badge {
+  position: absolute;
+  top: 8px;
+  /* bring closer to top for compactness */
+  right: 10px;
+  padding: 6px 10px;
+  font-size: 14px;
+}
+
+.map-placeholder {
+  min-height: clamp(280px, 40vh, 560px);
+  height: auto;
+  border-radius: 16px;
+  background: rgba(248, 250, 252, 0.6);
+  display: block;
+  border: 1px solid rgba(15, 23, 42, 0.04);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.02);
+  padding: 12px;
+}
+
+.map-card {
+  height: clamp(360px, 48vh, 720px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.map-placeholder {
+  /* fill remaining space in the card */
+  flex: 1 1 0%;
+  min-height: 0;
+  /* allow proper flex shrinking so children fill correctly */
+  position: relative;
+  overflow: hidden;
+  border-radius: 16px;
+  background: rgba(248, 250, 252, 0.6);
+  border: 1px solid rgba(15, 23, 42, 0.04);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.02);
+  padding: 12px;
+}
+
+.map-placeholder .map-inner {
+  height: 100%;
+  width: 100%;
+  min-height: 0;
+}
+
+.breakdown-card .legs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  /* tightened per spec */
+}
+
+.breakdown-card {
+  padding: 12px;
+}
+
+.leg {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 6px 0;
+  /* compact vertical rhythm */
+  border-top: 1px solid rgba(15, 23, 42, 0.05);
+  gap: 12px;
+}
+
+.leg:first-child {
+  border-top: none;
+}
+
+.leg__left {
+  display: flex;
+  gap: 12px;
+  /* icon + stacked meta */
+  align-items: flex-start;
+}
+
+.leg__meta {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.02;
+}
+
+.leg__title {
+  font-size: 18px;
+  font-weight: 700;
+  color: #1e293b;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.leg__duration {
+  font-size: 16px;
+  font-weight: 500;
+  color: #64748b;
+  margin-left: 3px;
+  line-height: 1.02;
+}
+
+.leg__secondary {
+  font-size: 18px;
+  font-weight: 600;
+  color: #000000;
+  margin-top: 0;
+  line-height: 1.15;
+  margin-bottom: 0;
+}
+
+.leg__secondary>* {
+  margin: 0;
+  padding: 0;
+  line-height: 1.05;
+}
+
+.leg__secondary>*+* {
+  margin-top: 6px;
+}
+
+.leg__right {
+  font-size: 18px;
+  font-weight: 600;
+  color: #334155;
+  align-self: flex-start;
+  min-width: 96px;
+  text-align: right;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.leg__icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: #1e293b;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #ffffff;
+  flex: 0 0 40px;
+}
+
+/* Transfer block styling */
+.transfer-block {
+  background: #f1f5f9;
+  border-left: 3px solid #0ea5a4;
+  padding: 4px 10px;
+  border-radius: 8px;
+  margin: 4px 0;
+  margin-left: 52px;
+  font-size: 15px;
+  line-height: 1.2;
+  display: flex;
+  align-items: center;
+}
+
+.transfer-block .leg__icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: #1e293b;
+  margin-right: 8px;
+  flex: 0 0 36px;
+}
+
+/* Reliability panel */
+.reliability-panel {
+  background: #e8f1ff;
+  border-left: 5px solid #2563eb;
+  padding: 10px 14px;
+  border-radius: 12px;
+  margin-top: 10px;
+}
+
+/* Colored variants matching opacity/feel of original panel */
+.reliability-panel.reliability--high {
+  background: #ecfdf5;
+  border-left-color: #10b981;
+}
+
+.reliability-panel.reliability--medium {
+  background: #fff7ed;
+  border-left-color: #f97316;
+}
+
+.reliability-panel.reliability--low {
+  background: #fff1f2;
+  border-left-color: #ef4444;
+}
+
+/* reliability card wrapper to keep it visually separate from breakdown-card */
+.reliability-card {
+  padding: 12px;
+  margin-top: 8px;
+}
+
+.reliability-title {
+  font-weight: 700;
+  font-size: 17px;
+  color: #1e40af;
+}
+
+.reliability-body {
+  font-size: 15px;
+  color: #1e3a8a;
+  margin-top: 6px;
+}
+
+
+@media (max-width: 960px) {
+  .resultspage__grid {
+    flex-direction: column;
+  }
+
+  .resultspage__container {
+    padding: 0 0.5rem;
+  }
+
+  .resultspage__title {
+    text-align: center;
+  }
+
+  .resultspage__left,
+  .resultspage__right {
+    max-width: 100%;
+    width: 100%;
+  }
+}

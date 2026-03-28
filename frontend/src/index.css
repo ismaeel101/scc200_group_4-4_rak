@@ -1,0 +1,113 @@
+html,
+body,
+#root {
+    height: 100%;
+    margin: 0;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+}
+
+div {
+    padding: 16px;
+}
+
+/* Accessibility focus styles */
+:focus-visible {
+    outline: 3px solid #005fcc;
+    outline-offset: 2px;
+}
+
+.visually-hidden {
+    position: absolute !important;
+    height: 1px;
+    width: 1px;
+    overflow: hidden;
+    clip: rect(1px, 1px, 1px, 1px);
+    white-space: nowrap;
+}
+
+/* Accessibility toggles applied via root classes from UiContext */
+.ux-high-contrast {
+    background-color: #000;
+    color: #fff;
+}
+
+.ux-high-contrast a,
+.ux-high-contrast button {
+    color: #fff;
+}
+
+.ux-large-text {
+    font-size: 18px;
+}
+
+.ux-reduce-motion * {
+    transition: none !important;
+    animation: none !important;
+}
+
+/* Loading overlay */
+.loading-overlay {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(250, 250, 250, 0.9);
+    z-index: 9999;
+}
+
+.loading-card {
+    text-align: center;
+    padding: 28px 36px;
+    border-radius: 8px;
+    background: linear-gradient(180deg, #ffffff, #f7f7f7);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.08);
+}
+
+.loading-logo {
+    font-size: 28px;
+    font-weight: 700;
+    margin-bottom: 8px;
+}
+
+.loading-sub {
+    color: #555;
+    margin-top: 6px;
+}
+
+/* Date/time layout tweaks */
+.combined-datetime {
+    display: none;
+    /* removed combined picker; stack via date-time-stacked */
+}
+
+.date-time-stacked {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.date-input-wrap,
+.time-input-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+@media (max-width: 600px) {
+    .combined-datetime {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .date-input-wrap,
+    .time-input-wrap {
+        width: 100%;
+    }
+}
+
+.field-error {
+    color: #b91c1c;
+    margin-top: 6px;
+    font-size: 0.9rem;
+}

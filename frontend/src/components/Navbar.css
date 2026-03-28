@@ -1,0 +1,246 @@
+.navbar {
+  background: #0b2136;
+  /* dark navy */
+  color: #ffffff;
+  -webkit-font-smoothing: antialiased;
+}
+
+.navbar__inner {
+  max-width: 1200px;
+  margin: 0 auto;
+  /* keep vertical padding, reduce left padding slightly so logo moves left */
+  padding: 0.75rem 1rem 0.75rem 0.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+}
+
+.navbar__brand {
+  display: inline-flex;
+  align-items: center;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  color: #ffffff;
+  /* pure white */
+  font-weight: 600;
+  /* semi-bold / medium */
+  font-size: 1.25rem;
+  /* prominent but not oversized */
+  line-height: 1;
+  letter-spacing: 0.5px;
+  /* slight spacing for clarity */
+  cursor: pointer;
+  -webkit-font-smoothing: antialiased;
+  will-change: auto;
+  filter: none !important;
+  opacity: 1 !important;
+}
+
+.navbar__links {
+  display: flex;
+  gap: 1.5rem;
+}
+
+.navbar__actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.navbar__lang {
+  position: relative;
+}
+
+.navbar__lang-btn {
+  background: transparent;
+  border: none;
+  color: #ffffff;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.navbar__lang-flag {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 16px;
+}
+
+.navbar__lang-code {
+  font-size: 12px;
+  color: #e6eefb;
+}
+
+.navbar__lang-menu {
+  position: absolute;
+  right: 0;
+  top: 40px;
+  background: #fff;
+  color: #071033;
+  border-radius: 8px;
+  box-shadow: 0 10px 30px rgba(2, 6, 23, 0.12);
+  padding: 8px;
+  min-width: 160px;
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+}
+
+.navbar__lang-item {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 8px;
+  background: transparent;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.navbar__lang-item:hover {
+  background: #f3f4f6;
+}
+
+.lang-flag {
+  font-size: 18px;
+}
+
+.lang-label {
+  font-size: 14px;
+  color: #071033;
+}
+
+.navbar__access {
+  position: relative;
+}
+
+.navbar__access-btn {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #ffffff;
+  padding: 6px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.navbar__access-menu {
+  position: absolute;
+  right: 0;
+  top: 44px;
+  background: #fff;
+  color: #071033;
+  border-radius: 8px;
+  box-shadow: 0 10px 30px rgba(2, 6, 23, 0.12);
+  padding: 10px;
+  min-width: 200px;
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.access-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+/* Accessibility classes applied on root */
+.ux-high-contrast {
+  filter: none;
+  background: #000 !important;
+  color: #fff !important;
+}
+
+.ux-high-contrast .navbar {
+  background: #000 !important;
+}
+
+.ux-large-text {
+  font-size: 1.125rem;
+}
+
+.ux-reduce-motion * {
+  transition: none !important;
+  animation: none !important;
+}
+
+
+/* Mobile hamburger toggle button (hidden on desktop) */
+.navbar__toggle {
+  display: none;
+  background: transparent;
+  border: none;
+  color: #ffffff;
+  font-size: 1.25rem;
+  cursor: pointer;
+}
+
+.navbar__link {
+  color: #ffffff;
+  text-decoration: none;
+  padding: 0.45rem 0.75rem;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 15px;
+  opacity: 0.95;
+}
+
+.navbar__link:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.navbar__link--active {
+  background: transparent;
+  box-shadow: none;
+  border-bottom: 2px solid rgba(255, 255, 255, 0.9);
+  padding-bottom: 0.15rem;
+}
+
+@media (max-width: 768px) {
+  .navbar__inner {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .navbar__toggle {
+    display: block;
+    position: absolute;
+    right: 12px;
+    top: 12px;
+  }
+
+  .navbar__links {
+    width: 100%;
+    display: none;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+  }
+
+  .navbar__links--open {
+    display: flex;
+  }
+
+  .navbar__link {
+    padding: 0.6rem 0.75rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .navbar__brand {
+    font-size: 1.05rem;
+    /* scale down a bit on very small screens */
+  }
+}

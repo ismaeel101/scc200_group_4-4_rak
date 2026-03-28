@@ -1,0 +1,11 @@
+.route-map {
+    width: 100%;
+    height: 400px;
+    /* explicit height to ensure proper rendering */
+    min-height: 300px;
+}
+
+.leaflet-container {
+    width: 100%;
+    height: 100%;
+}
