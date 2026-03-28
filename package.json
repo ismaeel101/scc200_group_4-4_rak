@@ -1,0 +1,22 @@
+{
+  "name": "scc-213-web",
+  "version": "1.0.0",
+  "description": "SCC 213",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
+    "axios": "^1.13.2",
+    "express": "^5.2.1",
+    "cors": "^2.8.5",
+    "sqlite3": "^5.1.7"
+  },
+  "devDependencies": {}
+}
