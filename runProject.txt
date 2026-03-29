@@ -2,3 +2,17 @@ cd /workspace/backend && PYTHONPATH=/workspace/backend python3 -m uvicorn app.ap
 
 
 cd /workspace/frontend && npm run dev
+
+
+## Database Files
+
+Due to GitHub file size limits, the database files are hosted on OneDrive:
+
+- bus.db: 
+- stops.db: 
+- rail.db: 
+
+Download these and place them in:
+backend/
+
+Then run the backend as normal.

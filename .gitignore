@@ -23,4 +23,4 @@ data/
 .DS_Store
 
 !backend/stops.db
-!backend/bus.db
+!backend/bus.dbbackend/*.db
