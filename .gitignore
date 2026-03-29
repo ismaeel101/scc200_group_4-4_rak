@@ -1,1 +1,26 @@
+# node
 node_modules/
+dist/
+build/
+
+# python
+__pycache__/
+*.pyc
+
+# env
+.env
+
+# large raw data (DON’T upload)
+data/
+*.xml
+*.gz
+*.zip
+
+# temp
+/tmp/
+
+# OS
+.DS_Store
+
+!backend/stops.db
+!backend/bus.db

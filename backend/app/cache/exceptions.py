@@ -1,0 +1,2 @@
+class CacheUnavailableError(Exception):
+    pass

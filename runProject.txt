@@ -1,0 +1,4 @@
+cd /workspace/backend && PYTHONPATH=/workspace/backend python3 -m uvicorn app.api:app --port 8000
+
+
+cd /workspace/frontend && npm run dev

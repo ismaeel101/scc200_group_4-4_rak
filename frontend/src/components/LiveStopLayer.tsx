@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useMap } from 'react-leaflet';
 import L from 'leaflet';
 import { useUi } from '../contexts/UiContext';
@@ -8,6 +8,9 @@ const LiveStopLayer: React.FC = () => {
     const markersRef = useRef<any[]>([]);
     const abortRef = useRef<AbortController | null>(null);
     const ui = useUi();
+    const [stops, setStops] = useState<any[]>([]);
+
+    // validStopIds is populated from the backend at app startup (UiContext)
 
     useEffect(() => {
         const onPopupOpen = (e: any) => {
@@ -22,6 +25,13 @@ const LiveStopLayer: React.FC = () => {
                         const el = ev.currentTarget as HTMLElement;
                         const id = el?.dataset?.id ?? null;
                         const name = el?.dataset?.name ?? null;
+                        const stop = { id, name };
+                        console.log('Selected stop:', stop);
+                        console.log('Using ATCO:', id);
+                        if (!id || !(/^\d+$/.test(String(id)))) {
+                            console.warn('Invalid stop ID, ignoring:', stop);
+                            return;
+                        }
                         console.log('[LiveStopLayer] Set as Origin clicked:', id, name);
                         ui.setSelectedOrigin(id, name);
                         const input = document.getElementById('from-input') as HTMLInputElement | null;
@@ -34,6 +44,13 @@ const LiveStopLayer: React.FC = () => {
                         const el = ev.currentTarget as HTMLElement;
                         const id = el?.dataset?.id ?? null;
                         const name = el?.dataset?.name ?? null;
+                        const stop = { id, name };
+                        console.log('Selected stop:', stop);
+                        console.log('Using ATCO:', id);
+                        if (!id || !(/^\d+$/.test(String(id)))) {
+                            console.warn('Invalid stop ID, ignoring:', stop);
+                            return;
+                        }
                         console.log('[LiveStopLayer] Set as Destination clicked:', id, name);
                         ui.setSelectedDestination(id, name);
                         const input = document.getElementById('to-input') as HTMLInputElement | null;
@@ -83,7 +100,15 @@ const LiveStopLayer: React.FC = () => {
                 const res = await fetch(url, { signal: controller.signal });
                 if (!res.ok) return;
                 const stops = await res.json();
-                console.log('[LiveStopLayer] fetched stops', Array.isArray(stops) ? stops.length : 0);
+                // filter to routable stops using shared validStopIds (populated by UiContext)
+                const valid = ui.validStopIds || new Set<string>();
+                const totalStops = Array.isArray(stops) ? stops.length : 0;
+                console.log('[LiveStopLayer] Valid stop IDs count:', valid.size);
+                const filteredStops = Array.isArray(stops)
+                    ? (valid.size > 0 ? stops.filter((s: any) => valid.has(s.id)) : stops)
+                    : [];
+                console.log('[LiveStopLayer] Total stops:', totalStops);
+                console.log('[LiveStopLayer] Routable stops:', filteredStops.length);
 
                 // remove existing markers
                 if (markersRef.current && markersRef.current.length > 0) {
@@ -91,10 +116,16 @@ const LiveStopLayer: React.FC = () => {
                     markersRef.current = [];
                 }
 
-                if (!stops || stops.length === 0) return;
+                if (!filteredStops || filteredStops.length === 0) {
+                    setStops([]);
+                    return;
+                }
+
+                // store filtered stops locally; shared validStopIds will be set in effect
+                setStops(filteredStops);
 
                 const created: any[] = [];
-                stops.forEach((s: any) => {
+                filteredStops.forEach((s: any) => {
                     try {
                         const circle = L.circleMarker([s.lat, s.lon], {
                             radius: 10,

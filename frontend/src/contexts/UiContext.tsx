@@ -18,6 +18,9 @@ type UiContextType = {
     selectedDestinationId?: string | null;
     selectedDestinationName?: string | null;
     setSelectedDestination: (id: string | null, name?: string | null) => void;
+    // routable stop ids cache
+    validStopIds?: Set<string>;
+    setValidStopIds: (ids: Set<string>) => void;
 };
 
 const defaultLang: Language = { code: 'en', label: 'English', flag: '🇬🇧' };
@@ -33,6 +36,30 @@ export const UiProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     const [selectedOriginName, setSelectedOriginName] = useState<string | null>(null);
     const [selectedDestinationId, setSelectedDestinationId] = useState<string | null>(null);
     const [selectedDestinationName, setSelectedDestinationName] = useState<string | null>(null);
+    const [validStopIds, setValidStopIds] = useState<Set<string>>(new Set());
+
+    // Load routable stop ids once on startup from the backend timetable
+    useEffect(() => {
+        let cancelled = false;
+        const load = async () => {
+            try {
+                const res = await fetch('http://127.0.0.1:8000/api/routable-stops');
+                if (!res.ok) {
+                    console.warn('Failed to load routable stops:', res.status);
+                    return;
+                }
+                const data = await res.json();
+                const ids = new Set<string>(Array.isArray(data.ids) ? data.ids : []);
+                if (cancelled) return;
+                setValidStopIds(ids);
+                console.log('Valid stop IDs count:', ids.size);
+            } catch (e) {
+                console.warn('Error fetching routable stops:', e);
+            }
+        };
+        load();
+        return () => { cancelled = true; };
+    }, []);
 
     // apply classes to root element
     useEffect(() => {
@@ -60,10 +87,14 @@ export const UiProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         },
         selectedDestinationId,
         selectedDestinationName,
+        validStopIds,
         setSelectedDestination: (id: string | null, name: string | null = null) => {
             console.log('[UiContext] setSelectedDestination called:', id, name);
             setSelectedDestinationId(id);
             setSelectedDestinationName(name);
+        },
+        setValidStopIds: (ids: Set<string>) => {
+            setValidStopIds(ids);
         },
     };
 

@@ -21,7 +21,7 @@ const SUGGESTED_CITIES = [
 
 const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false }) => {
   const ui = useUi();
-  const { language, setSelectedOrigin, setSelectedDestination } = ui;
+  const { language, setSelectedOrigin, setSelectedDestination, validStopIds } = ui;
   const t = translations[language.code] || translations.en;
   const [from, setFrom] = useState('');
   const [fromSuggestions, setFromSuggestions] = useState<Stop[]>([]);
@@ -85,12 +85,20 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false }) 
 
     try {
       if (!origin_id && from && from.length > 1) {
-        const r = await searchStops(from, 1);
-        if (r && r.length > 0) origin_id = r[0].id;
+        const r = await searchStops(from, 5);
+        if (r && r.length > 0) {
+          const valid = validStopIds || new Set<string>();
+          const pick = r.find((x: any) => valid.has(x.id));
+          if (pick) origin_id = pick.id;
+        }
       }
       if (!destination_id && to && to.length > 1) {
-        const r = await searchStops(to, 1);
-        if (r && r.length > 0) destination_id = r[0].id;
+        const r = await searchStops(to, 5);
+        if (r && r.length > 0) {
+          const valid = validStopIds || new Set<string>();
+          const pick = r.find((x: any) => valid.has(x.id));
+          if (pick) destination_id = pick.id;
+        }
       }
     } catch (e) {
       // ignore lookup failures
@@ -146,6 +154,7 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false }) 
     }
 
     try {
+      console.log('Journey request:', { origin_id: payload.origin_id, destination_id: payload.destination_id });
       const result = await onSearch(payload as any);
       if (result && Array.isArray(result)) setJourneys(result);
       else setJourneys(null);
@@ -198,7 +207,10 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false }) 
       }
       try {
         const results = await searchStops(from, 5);
-        if (active) setFromSuggestions(results);
+        const valid = validStopIds || new Set<string>();
+        const filtered = Array.isArray(results) ? results.filter((r: any) => valid.has(r.id)) : [];
+        console.log('[SearchForm] Total suggestions:', Array.isArray(results) ? results.length : 0, 'Routable:', filtered.length);
+        if (active) setFromSuggestions(filtered);
       } catch (e) {
         setFromSuggestions([]);
       }
@@ -340,7 +352,24 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false }) 
       {fromSuggestions.length > 0 && (
         <ul className="suggestions" role="listbox">
           {fromSuggestions.map((s) => (
-            <li key={s.id} role="option" onClick={() => { setFrom(s.name); setSelectedOrigin(s.id, s.name); if (onSelectFrom) onSelectFrom(s); }}>{s.name} — {s.type}</li>
+            <li key={s.id} role="option" onClick={() => {
+              // ensure we always use ATCO id
+              const stop = s;
+              console.log('Selected stop (suggestion):', stop);
+              console.log('Using ATCO:', stop.id);
+              if (!stop.id || !(/^[\d]+$/.test(String(stop.id)))) {
+                console.warn('Invalid stop ID, ignoring suggestion:', stop);
+                return;
+              }
+              const valid = validStopIds || new Set<string>();
+              if (!valid.has(stop.id)) {
+                console.warn('Blocked invalid stop (not routable):', stop);
+                return;
+              }
+              setFrom(s.name);
+              setSelectedOrigin(s.id, s.name);
+              if (onSelectFrom) onSelectFrom(s);
+            }}>{s.name} — {s.type}</li>
           ))}
         </ul>
       )}

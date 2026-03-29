@@ -8,8 +8,9 @@ import { useUi } from '../contexts/UiContext';
 
 const SearchPage: React.FC = () => {
   const navigate = useNavigate();
-  const { language } = useUi();
+  const { language, validStopIds } = useUi();
   const t = translations[language.code] || translations.en;
+  const planLabel = typeof t.planYourJourney === 'string' ? t.planYourJourney : 'Plan your journey';
   const [loading, setLoading] = useState(false);
   const [stops, setStops] = useState<any[]>([]);
   // const { reduceMotion } = useUi();
@@ -39,13 +40,19 @@ const SearchPage: React.FC = () => {
             </div>
           </div>
         )}
-        <aside className="searchpage__panel" role="complementary" aria-label={`${t.planYourJourney} panel`}>
+        <aside className="searchpage__panel" role="complementary" aria-label={`${planLabel} panel`}>
           <div className="searchpage__panel-inner">
-            <h2 className="searchpage__panel-title">{t.planYourJourney}</h2>
+            <h2 className="searchpage__panel-title">{planLabel}</h2>
             <div className="searchpage__card">
               <SearchForm
                 isLoading={loading}
                 onSelectFrom={(s) => {
+                  // only show routable stops on the map — use shared validStopIds
+                  const valid = validStopIds || new Set<string>();
+                  if (!valid.has(s.id)) {
+                    console.warn('Blocked invalid stop:', s);
+                    return;
+                  }
                   setStops([s]);
                 }}
                 onSearch={async (data: any) => {
