@@ -1,0 +1,6 @@
+{
+    "name": "scc_213/web",  
+    "image": "scc-registry.lancs.ac.uk/teaching/scc_213/web:25.1",
+    "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached",
+    "workspaceFolder": "/workspace"
+}
