@@ -178,16 +178,20 @@ class JourneyPlanner:
         out.sort(key=lambda x: (x["distance_m"], x["id"]))
         return out
 
-    def _walk_leg_dict(self, from_name, to_name, depart_dt, arrive_dt):
+    def _walk_leg_dict(self, from_name, to_name, depart_dt, arrive_dt, from_lat=None, from_lon=None, to_lat=None, to_lon=None):
         return {
             "mode": "walk",
             "from": from_name,
             "to": to_name,
             "depart": depart_dt.isoformat(),
             "arrive": arrive_dt.isoformat(),
+            "from_lat": from_lat,
+            "from_lon": from_lon,
+            "to_lat": to_lat,
+            "to_lon": to_lon,
         }
 
-    def _vehicle_leg_dict(self, mode, from_name, to_name, depart_dt, arrive_dt, line=None):
+    def _vehicle_leg_dict(self, mode, from_name, to_name, depart_dt, arrive_dt, line=None, from_lat=None, from_lon=None, to_lat=None, to_lon=None):
         return {
             "mode": mode,
             "line": line or "",
@@ -195,6 +199,10 @@ class JourneyPlanner:
             "to": to_name,
             "depart": depart_dt.isoformat(),
             "arrive": arrive_dt.isoformat(),
+            "from_lat": from_lat,
+            "from_lon": from_lon,
+            "to_lat": to_lat,
+            "to_lon": to_lon,
         }
 
     def _get_rail_candidates_from_stop(
@@ -208,18 +216,6 @@ class JourneyPlanner:
         window_end=None,
         downstream_limit=10,
     ):
-        """
-        Return candidate rail legs starting from stop_id.
-
-        Planner rail stop ids may look like:
-          - "RAIL:LNS"
-
-        But rail_schedule_stops.tiploc stores:
-          - "LNS"
-
-        So this helper normalises planner stop ids to TIPLOC before querying
-        rail_schedule_stops.
-        """
         candidates = []
 
         tiploc = stop_id
@@ -362,10 +358,6 @@ class JourneyPlanner:
         return dt.replace(minute=bucket_minute, second=0, microsecond=0).isoformat()
 
     def _journey_alternative_signature(self, journey):
-        """
-        Coarser signature than exact leg times.
-        Used to collapse near-identical journeys into one alternative.
-        """
         legs = journey.get("legs", [])
         vehicle_legs = [leg for leg in legs if leg.get("mode") != "walk"]
 
@@ -389,10 +381,6 @@ class JourneyPlanner:
         )
 
     def _select_distinct_journeys(self, journeys, max_options):
-        """
-        Keep the best journey from each coarse alternative bucket, then
-        return the top max_options after normal sorting.
-        """
         journeys = sorted(journeys, key=self._journey_sort_key)
 
         best_per_signature = {}
@@ -454,15 +442,6 @@ class JourneyPlanner:
         return max(1, int(math.ceil(dist / WALKING_SPEED_MPS / 60.0)))
 
     def _plan_with_provider(self, request):
-        """
-        Small compatibility implementation for old provider-based unit tests.
-        Supports:
-        - direct journey
-        - one transfer
-        - walking transfer between nearby/grouped stops
-
-        Returns Journey objects from models.py.
-        """
         provider = self.provider
         if provider is None:
             return []
@@ -603,7 +582,6 @@ class JourneyPlanner:
 
         radii = [500, 1000]
 
-        # Week 4: try tighter timetable windows first, widen only if needed
         window_hours_attempts = [3, 6, 12, None]
 
         def _placeholder_dt():
@@ -713,11 +691,11 @@ class JourneyPlanner:
                         if arrive_dt < depart_dt:
                             continue
 
-                        vehicle = self._vehicle_leg_dict("bus", origin_name, dest_name, depart_dt, arrive_dt, line=None)
+                        vehicle = self._vehicle_leg_dict("bus", origin_name, dest_name, depart_dt, arrive_dt, line=None, from_lat=origin_lat, from_lon=origin_lon, to_lat=dest_lat, to_lon=dest_lon)
                         total_duration = int((arrive_dt - depart_dt).total_seconds() / 60)
                         if total_duration <= 0 and (dest_seq - o_seq) > 0:
                             arrive_dt = depart_dt + timedelta(minutes=1)
-                            vehicle = self._vehicle_leg_dict("bus", origin_name, dest_name, depart_dt, arrive_dt, line=None)
+                            vehicle = self._vehicle_leg_dict("bus", origin_name, dest_name, depart_dt, arrive_dt, line=None, from_lat=origin_lat, from_lon=origin_lon, to_lat=dest_lat, to_lon=dest_lon)
                             total_duration = 1
 
                         score, band, explanation = self._compute_reliability([vehicle], total_duration, conn)
@@ -803,6 +781,11 @@ class JourneyPlanner:
 
                                     walk1_m = 0
                                     walk2_m = 0
+                                    
+                                    o_lat = None
+                                    o_lon = None
+                                    d_lat = None
+                                    d_lon = None
 
                                     if orig_stop_row:
                                         try:
@@ -828,7 +811,7 @@ class JourneyPlanner:
                                         walk_arrive = depart_dt
                                         walk_depart = walk_arrive - timedelta(seconds=walk_secs)
                                         if not (origin_exact_usable and origin_id == o_stop):
-                                            legs.append(self._walk_leg_dict(origin_name, orig_stop_row[2], walk_depart, walk_arrive))
+                                            legs.append(self._walk_leg_dict(origin_name, orig_stop_row[2], walk_depart, walk_arrive, from_lat=origin_lat, from_lon=origin_lon, to_lat=o_lat, to_lon=o_lon))
 
                                     try:
                                         from_name = orig_stop_row[2]
@@ -843,14 +826,14 @@ class JourneyPlanner:
                                     if veh_dur_secs <= 0:
                                         continue
 
-                                    legs.append(self._vehicle_leg_dict("bus", from_name, to_name, depart_dt, arrive_dt, line=None))
+                                    legs.append(self._vehicle_leg_dict("bus", from_name, to_name, depart_dt, arrive_dt, line=None, from_lat=o_lat, from_lon=o_lon, to_lat=d_lat, to_lon=d_lon))
 
                                     if walk2_m > 50:
                                         walk_secs2 = walk2_m / WALKING_SPEED_MPS
                                         walk_depart2 = arrive_dt
                                         walk_arrive2 = arrive_dt + timedelta(seconds=walk_secs2)
                                         if not (dest_exact_usable and destination_id == d_stop):
-                                            legs.append(self._walk_leg_dict(dest_stop_row[2], dest_name, walk_depart2, walk_arrive2))
+                                            legs.append(self._walk_leg_dict(dest_stop_row[2], dest_name, walk_depart2, walk_arrive2, from_lat=d_lat, from_lon=d_lon, to_lat=dest_lat, to_lon=dest_lon))
 
                                     try:
                                         start_dt = datetime.fromisoformat(legs[0]["depart"])
@@ -947,7 +930,7 @@ class JourneyPlanner:
                     explored_states = 0
                     heap = []
                     counter = 0
-                    best = {}  # (stop_id, vehicle_legs, last_vehicle_mode) -> best arrival datetime
+                    best = {}
 
                     for depart_dt, r, seed_mode in origin_candidates:
                         start_stop = r["stop_id"]
@@ -970,7 +953,7 @@ class JourneyPlanner:
                                         walk_secs = walk_m / WALKING_SPEED_MPS
                                         walk_arrive = depart_dt
                                         walk_depart = walk_arrive - timedelta(seconds=walk_secs)
-                                        legs.append(self._walk_leg_dict(origin_name, nm, walk_depart, walk_arrive))
+                                        legs.append(self._walk_leg_dict(origin_name, nm, walk_depart, walk_arrive, from_lat=origin_lat, from_lon=origin_lon, to_lat=s_lat, to_lon=s_lon))
 
                         heapq.heappush(
                             heap,
@@ -1045,7 +1028,7 @@ class JourneyPlanner:
 
                                 walk_secs = walk_m / WALKING_SPEED_MPS
                                 arrive_walk = cur_time + timedelta(seconds=walk_secs)
-                                walk_leg = self._walk_leg_dict(cur_name, nb["name"], cur_time, arrive_walk)
+                                walk_leg = self._walk_leg_dict(cur_name, nb["name"], cur_time, arrive_walk, from_lat=cur_lat, from_lon=cur_lon, to_lat=nb["lat"], to_lon=nb["lon"])
                                 legs_new = cur_legs + [walk_leg]
                                 walk_last_mode = last_vehicle_mode
                                 bkey = (nb_id, vehicle_legs, walk_last_mode)
@@ -1129,7 +1112,7 @@ class JourneyPlanner:
                                     if ds_name == cur_name:
                                         continue
 
-                                    leg = self._vehicle_leg_dict("bus", cur_name, ds_name, depart_dt, arrive_dt, line=None)
+                                    leg = self._vehicle_leg_dict("bus", cur_name, ds_name, depart_dt, arrive_dt, line=None, from_lat=cur_lat, from_lon=cur_lon, to_lat=ds_lat, to_lon=ds_lon)
                                     legs_new = cur_legs + [leg]
                                     new_vehicle_legs = vehicle_legs + 1
                                     if new_vehicle_legs > MAX_VEHICLE_LEGS:
@@ -1183,7 +1166,7 @@ class JourneyPlanner:
                                 if ds_name == cur_name:
                                     continue
 
-                                leg = self._vehicle_leg_dict("rail", cur_name, ds_name, depart_dt, arrive_dt, line=None)
+                                leg = self._vehicle_leg_dict("rail", cur_name, ds_name, depart_dt, arrive_dt, line=None, from_lat=cur_lat, from_lon=cur_lon, to_lat=ds_lat, to_lon=ds_lon)
                                 legs_new = cur_legs + [leg]
                                 new_vehicle_legs = vehicle_legs + 1
                                 if new_vehicle_legs > MAX_VEHICLE_LEGS:
@@ -1331,6 +1314,5 @@ class JourneyPlanner:
 
         good.sort(key=self._journey_sort_key)
         return self._select_distinct_journeys(good, max_options)
-
 
 Planner = JourneyPlanner
