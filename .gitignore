@@ -15,6 +15,7 @@ data/
 *.xml
 *.gz
 *.zip
+*.db
 
 # temp
 /tmp/
