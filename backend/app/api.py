@@ -104,7 +104,8 @@ async def api_get_stops(
     """Return stops within the provided bounding box using sqlite3.
 
     This lightweight endpoint is used by the frontend map to fetch visible
-    stops. It directly queries the local `backend/database1.db` SQLite file.
+    stops. It directly queries the local `backend/stops.db` SQLite file,
+    and also checks `bus.db` bus_stops for TransXChange-sourced metadata.
     """
     import sqlite3
     from pathlib import Path
@@ -124,14 +125,46 @@ async def api_get_stops(
 
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
+
+    # Attach bus.db for TransXChange bus_stops fallback
+    bus_db = base / "bus.db"
+    if bus_db.exists():
+        try:
+            conn.execute(f"ATTACH DATABASE '{bus_db}' AS bus")
+        except Exception:
+            pass
+
     try:
+        results = []
+        seen_ids: set = set()
+
+        # 1. NaPTAN stops
         cur = conn.execute(
             "SELECT atco_code AS id, common_name AS name, latitude AS lat, longitude AS lon FROM stops "
             "WHERE latitude BETWEEN ? AND ? AND longitude BETWEEN ? AND ? LIMIT ?",
             (min_lat, max_lat, min_lon, max_lon, limit),
         )
-        rows = cur.fetchall()
-        results = [dict(r) for r in rows]
+        for r in cur.fetchall():
+            d = dict(r)
+            results.append(d)
+            seen_ids.add(d["id"])
+
+        # 2. TransXChange bus_stops (fill in stops missing from NaPTAN)
+        try:
+            cur2 = conn.execute(
+                "SELECT atco_code AS id, common_name AS name, latitude AS lat, longitude AS lon FROM bus.bus_stops "
+                "WHERE latitude IS NOT NULL AND longitude IS NOT NULL "
+                "AND latitude BETWEEN ? AND ? AND longitude BETWEEN ? AND ? LIMIT ?",
+                (min_lat, max_lat, min_lon, max_lon, limit),
+            )
+            for r in cur2.fetchall():
+                d = dict(r)
+                if d["id"] not in seen_ids:
+                    results.append(d)
+                    seen_ids.add(d["id"])
+        except Exception:
+            pass  # bus.bus_stops may not exist
+
         return results
     except sqlite3.DatabaseError as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -177,6 +210,35 @@ async def api_routable_stops():
         except Exception:
             pass
 
+
+@app.get(
+    "/api/validate-stops",
+    tags=["System"],
+    dependencies=[Depends(rate_limiter)],
+)
+async def api_validate_stops():
+    """Validate that bus timetable stop IDs can be resolved to metadata.
+
+    Returns a JSON object with resolved/unresolved counts and sample
+    unresolved IDs to help diagnose data mismatches.
+    """
+    from app.data.stops import StopService
+    try:
+        svc = StopService()
+        resolved, unresolved, sample = svc.validate_bus_stop_coverage()
+        return {
+            "resolved": resolved,
+            "unresolved": unresolved,
+            "sample_unresolved": sample,
+            "status": "ok" if unresolved == 0 else "mismatch",
+        }
+    except Exception as e:
+        return {
+            "resolved": 0,
+            "unresolved": -1,
+            "sample_unresolved": [],
+            "status": f"error: {e}",
+        }
 
 
 # ==========================================
@@ -466,15 +528,47 @@ async def get_stops(
     try:
         conn = sqlite3.connect(str(db_path))
         conn.row_factory = sqlite3.Row
+
+        # Attach bus.db for TransXChange bus_stops fallback
+        bus_db = base / "bus.db"
+        if bus_db.exists():
+            try:
+                conn.execute(f"ATTACH DATABASE '{bus_db}' AS bus")
+            except Exception:
+                pass
+
+        results: list[dict] = []
+        seen_ids: set = set()
+
+        # 1. NaPTAN stops
         cur = conn.execute(
             "SELECT atco_code AS id, common_name AS name, latitude AS lat, longitude AS lon FROM stops WHERE common_name LIKE ? LIMIT ?",
             (f"%{query}%", limit),
         )
-        rows = cur.fetchall()
-        stops = [dict(r) for r in rows]
-        if not stops:
+        for r in cur.fetchall():
+            d = dict(r)
+            results.append(d)
+            seen_ids.add(d["id"])
+
+        # 2. TransXChange bus_stops
+        try:
+            cur2 = conn.execute(
+                "SELECT atco_code AS id, common_name AS name, latitude AS lat, longitude AS lon FROM bus.bus_stops WHERE common_name LIKE ? LIMIT ?",
+                (f"%{query}%", limit),
+            )
+            for r in cur2.fetchall():
+                d = dict(r)
+                if d["id"] not in seen_ids:
+                    results.append(d)
+                    seen_ids.add(d["id"])
+        except Exception:
+            pass  # bus.bus_stops may not exist
+
+        if not results:
             raise HTTPException(status_code=404, detail="No stops found")
-        return stops
+        return results[:limit]
+    except HTTPException:
+        raise
     except sqlite3.DatabaseError as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
