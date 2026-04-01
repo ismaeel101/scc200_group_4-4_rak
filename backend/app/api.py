@@ -63,8 +63,8 @@ async def limit_request_size(request: Request, call_next):
 # ==========================================
 
 class JourneyRequest(BaseModel):
-    origin_id: str = Field(..., description="AtcoCode (bus) or CRS (rail) wrapped in PlaceId")
-    destination_id: str = Field(..., description="AtcoCode (bus) or CRS (rail) wrapped in PlaceId")
+    origin_id: str = Field(..., description="AtcoCode (bus) or CRS/Tiploc (rail)")
+    destination_id: str = Field(..., description="AtcoCode (bus) or CRS/Tiploc (rail)")
     time_type: Literal["depart_at", "arrive_by"]
     time_iso: datetime
     modes: Literal["bus", "rail", "mixed"]
@@ -90,7 +90,6 @@ class Leg(BaseModel):
     to_loc:   str = Field(..., alias="to")
     depart:   datetime
     arrive:   datetime
-    # Added map coordinates support
     from_lat: Optional[float] = None
     from_lon: Optional[float] = None
     to_lat:   Optional[float] = None
@@ -134,17 +133,6 @@ class StatusResponse(BaseModel):
 # MAPPING FUNCTIONS
 # ==========================================
 
-def _parse_stop(raw) -> dict:
-    if isinstance(raw, dict):
-        return raw
-    return {
-        "id":   raw.id,
-        "name": raw.name,
-        "type": raw.type,
-        "lat":  raw.lat,
-        "lon":  raw.lon,
-    }
-
 def _parse_live_status(raw) -> Optional[dict]:
     if raw is None:
         return None
@@ -158,7 +146,6 @@ def _parse_live_status(raw) -> Optional[dict]:
     }
 
 def _parse_leg(raw) -> dict:
-    """Robust parser handling models.py objects and planner.py dicts."""
     if isinstance(raw, dict):
         return {
             "from":             raw.get("from") or getattr(raw, "from_id", None),
@@ -177,7 +164,6 @@ def _parse_leg(raw) -> dict:
             "risk_explanation": raw.get("risk_explanation", getattr(raw, "risk_explanation", None)),
         }
     
-    # Object fallback
     return {
         "from":             getattr(raw, "from_id", None) or getattr(raw, "from_loc", None),
         "to":               getattr(raw, "to_id", None) or getattr(raw, "to_loc", None),
@@ -250,8 +236,12 @@ async def api_get_stops(
     conn.row_factory = sqlite3.Row
     try:
         cur = conn.execute(
-            "SELECT atco_code AS id, common_name AS name, latitude AS lat, longitude AS lon FROM stops "
-            "WHERE latitude BETWEEN ? AND ? AND longitude BETWEEN ? AND ? LIMIT ?",
+            """
+            SELECT atco_code AS id, common_name AS name, latitude AS lat, longitude AS lon,
+            CASE WHEN stop_type IN ('RLY', 'RSE', 'TMU', 'MET') THEN 'rail' ELSE 'bus' END as type
+            FROM stops 
+            WHERE latitude BETWEEN ? AND ? AND longitude BETWEEN ? AND ? LIMIT ?
+            """,
             (min_lat, max_lat, min_lon, max_lon, limit),
         )
         return [dict(r) for r in cur.fetchall()]
@@ -262,19 +252,40 @@ async def api_get_stops(
 
 @app.get("/api/routable-stops", tags=["Search"], dependencies=[Depends(rate_limiter)])
 async def api_routable_stops():
-    db_path = "/workspace/backend/bus.db"
-    if not os.path.exists(db_path):
-        raise HTTPException(status_code=503, detail="Bus database not found")
+    bus_db_path = "/workspace/backend/bus.db"
+    rail_db_path = "/workspace/backend/rail.db"
 
-    try:
-        conn = sqlite3.connect(db_path)
-        cur = conn.execute("SELECT DISTINCT stop_id FROM stop_times")
-        ids = [r[0] for r in cur.fetchall() if r and r[0]]
-        return {"ids": ids}
-    except sqlite3.DatabaseError as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        conn.close()
+    routable_ids = set()
+
+    # 1. Extract Bus Stops
+    if os.path.exists(bus_db_path):
+        try:
+            conn = sqlite3.connect(bus_db_path)
+            cur = conn.execute("SELECT DISTINCT stop_id FROM stop_times")
+            routable_ids.update(r[0] for r in cur.fetchall() if r and r[0])
+            conn.close()
+        except sqlite3.DatabaseError as e:
+            print(f"Bus DB read error: {e}")
+
+    # 2. Extract Rail Stations
+    if os.path.exists(rail_db_path):
+        try:
+            conn = sqlite3.connect(rail_db_path)
+            # tiploc is the primary id for rail stations in the schedules
+            cur = conn.execute("SELECT DISTINCT tiploc FROM schedules")
+            rail_ids = [r[0] for r in cur.fetchall() if r and r[0]]
+            routable_ids.update(rail_ids)
+            
+            # Planner.py occasionally wraps rail IDs in 'RAIL:' prefix
+            routable_ids.update(f"RAIL:{r}" for r in rail_ids)
+            conn.close()
+        except sqlite3.DatabaseError as e:
+            print(f"Rail DB read error: {e}")
+
+    if not routable_ids:
+         raise HTTPException(status_code=503, detail="No routable databases found")
+
+    return {"ids": list(routable_ids)}
 
 @app.get("/stops", response_model=List[StopResponse], tags=["Search"], dependencies=[Depends(rate_limiter)])
 async def get_stops(
@@ -290,8 +301,11 @@ async def get_stops(
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
         cur = conn.execute(
-            "SELECT atco_code AS id, common_name AS name, latitude AS lat, longitude AS lon, "
-            "'bus' as type FROM stops WHERE common_name LIKE ? LIMIT ?",
+            """
+            SELECT atco_code AS id, common_name AS name, latitude AS lat, longitude AS lon, 
+            CASE WHEN stop_type IN ('RLY', 'RSE', 'TMU', 'MET') THEN 'rail' ELSE 'bus' END as type 
+            FROM stops WHERE common_name LIKE ? LIMIT ?
+            """,
             (f"%{query}%", limit),
         )
         stops = [dict(r) for r in cur.fetchall()]
