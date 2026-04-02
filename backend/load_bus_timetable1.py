@@ -60,8 +60,15 @@ def create_tables(conn):
             departure_time TEXT,
             sequence INTEGER
         );
+        CREATE TABLE IF NOT EXISTS bus_stops (
+            atco_code TEXT PRIMARY KEY,
+            common_name TEXT,
+            latitude REAL,
+            longitude REAL
+        );
         CREATE INDEX IF NOT EXISTS idx_stop_times_stop ON stop_times(stop_id);
         CREATE INDEX IF NOT EXISTS idx_stop_times_trip ON stop_times(trip_id);
+        CREATE INDEX IF NOT EXISTS idx_bus_stops_name ON bus_stops(common_name);
     """)
     conn.commit()
     print("Tables created.")
@@ -77,6 +84,35 @@ def process_file(path, conn):
 
     cur = conn.cursor()
     count = 0
+
+    # ── Extract stop metadata from <StopPoint> elements ──
+    # TransXChange files embed NaPTAN ATCO codes and common names for every
+    # stop referenced by the timetable.  Storing them in bus_stops ensures
+    # every stop_id in stop_times can be resolved to a name/location.
+    for sp in root.findall(".//tx:StopPoint", NS):
+        atco_el = sp.find("tx:AtcoCode", NS)
+        cname_el = sp.find("tx:CommonName", NS)
+        if atco_el is not None and atco_el.text and cname_el is not None and cname_el.text:
+            atco = atco_el.text.strip()
+            cname = cname_el.text.strip()
+            lat = None
+            lon = None
+            loc_el = sp.find("tx:Place/tx:Location", NS)
+            if loc_el is not None:
+                lat_el = loc_el.find("tx:Latitude", NS)
+                lon_el = loc_el.find("tx:Longitude", NS)
+                try:
+                    lat = float(lat_el.text) if lat_el is not None and lat_el.text else None
+                except ValueError:
+                    lat = None
+                try:
+                    lon = float(lon_el.text) if lon_el is not None and lon_el.text else None
+                except ValueError:
+                    lon = None
+            cur.execute(
+                "INSERT OR IGNORE INTO bus_stops (atco_code, common_name, latitude, longitude) VALUES (?,?,?,?)",
+                (atco, cname, lat, lon),
+            )
 
     # Extract services
     for svc in root.findall(".//tx:Service", NS):

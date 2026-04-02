@@ -117,6 +117,20 @@ def ensure_tables(conn: sqlite3.Connection):
         )
         """
     )
+    # Bus stop metadata extracted from TransXChange <StopPoint> elements.
+    # These ATCO codes are the same IDs used in stop_times.stop_id, so this
+    # table provides the authoritative mapping from timetable stop IDs to
+    # human-readable names (and coordinates when available).
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS bus_stops (
+            atco_code TEXT PRIMARY KEY,
+            common_name TEXT,
+            latitude REAL,
+            longitude REAL
+        )
+        """
+    )
     conn.commit()
     print("Tables created successfully")
 
@@ -134,6 +148,36 @@ def process_file(path: str, conn: sqlite3.Connection, stop_times_counter: List[i
     cur = conn.cursor()
 
     try:
+        # Extract stop metadata from <StopPoint> elements.
+        # TransXChange files embed the NaPTAN ATCO code and common name for
+        # every stop referenced by the timetable.  Storing them in bus_stops
+        # ensures every stop_id in stop_times can be resolved to a name.
+        for sp in root.findall('.//tx:StopPoint', ns):
+            atco_el = sp.find('tx:AtcoCode', ns)
+            cname_el = sp.find('tx:CommonName', ns)
+            if atco_el is not None and atco_el.text and cname_el is not None and cname_el.text:
+                atco = atco_el.text.strip()
+                cname = cname_el.text.strip()
+                # Latitude / longitude are not always present in TransXChange
+                lat = None
+                lon = None
+                loc_el = sp.find('tx:Place/tx:Location', ns)
+                if loc_el is not None:
+                    lat_el = loc_el.find('tx:Latitude', ns)
+                    lon_el = loc_el.find('tx:Longitude', ns)
+                    try:
+                        lat = float(lat_el.text) if lat_el is not None and lat_el.text else None
+                    except ValueError:
+                        lat = None
+                    try:
+                        lon = float(lon_el.text) if lon_el is not None and lon_el.text else None
+                    except ValueError:
+                        lon = None
+                cur.execute(
+                    "INSERT OR IGNORE INTO bus_stops (atco_code, common_name, latitude, longitude) VALUES (?, ?, ?, ?)",
+                    (atco, cname, lat, lon),
+                )
+
         # collect services
         for svc in root.findall('.//tx:Service', ns):
             sc = svc.find('tx:ServiceCode', ns)
