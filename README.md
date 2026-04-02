@@ -4,7 +4,7 @@ This README summarises recent local work, test data added, constraints observed 
 
 ## Summary of changes
 - Implemented a journey reliability layer: `backend/app/domain/reliability.py` (score, band, explanations).
-- Integrated defaults into the API: `backend/app/api.py` now ensures each journey includes `reliability_score`, `reliability_band`, and `reliability_explanation` when DecisionSupport data is missing.
+- Integrated defaults into the API: `backend/app/api.py` now ensures each journey includes `reliability_score`, `reliability_band`, and `reliability_explanations` when DecisionSupport data is missing.
 - Added tests: `backend/tests/test_reliability.py` and a lightweight runner `backend/run_reliability_tests_runner.py` for environments without `pytest`.
 - Created minimal test data under `backend/data/` (NaPTAN and a TransXChange sample) so loader scripts can be executed locally.
 

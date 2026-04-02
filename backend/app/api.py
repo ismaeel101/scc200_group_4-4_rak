@@ -264,7 +264,7 @@ class Journey(BaseModel):
     changes:            int
     reliability_score:       int = Field(..., ge=0, le=100)
     reliability_band:        Literal["High", "Medium", "Low"]
-    reliability_explanation: List[str]
+    reliability_explanations: List[str]
     legs: List[Leg]
 
 
@@ -377,7 +377,7 @@ def _parse_journey(raw) -> dict:
         "changes":                 raw.changes,
         "reliability_score":       getattr(raw, "reliability_score",       0),
         "reliability_band":        getattr(raw, "reliability_band",        "Low"),
-        "reliability_explanation": getattr(raw, "reliability_explanation", []),
+        "reliability_explanations": getattr(raw, "reliability_explanations", []),
         "legs":                    [_parse_leg(leg) for leg in raw.legs],
     }
 
@@ -585,12 +585,12 @@ async def plan_journey(
         # If reliability fields missing or zero-ish, compute defaults
         missing_score = not j.get("reliability_score") and j.get("reliability_score") != 0
         missing_band = not j.get("reliability_band")
-        missing_expl = not j.get("reliability_explanation")
+        missing_expl = not j.get("reliability_explanations")
         if missing_score or missing_band or missing_expl:
             res = calculate_reliability(legs_for_calc)
             j["reliability_score"] = int(res.score)
             j["reliability_band"] = res.band
-            j["reliability_explanation"] = res.explanations
+            j["reliability_explanations"] = res.explanations
 
     # Step 4: Sort with tie-breakers per README routing objective:
     #   Primary:   earliest arrival (time) or reliability_score (reliability)

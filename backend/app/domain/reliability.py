@@ -9,6 +9,7 @@ class ReliabilityResult:
     score: int  # 0-100
     band: str  # "High", "Medium", or "Low"
     explanations: List[str]
+    has_tight_connection: bool = False
 
 
 def _get_field(leg: Any, name: str, default):
@@ -56,10 +57,12 @@ def calculate_reliability(legs: List[Any]) -> ReliabilityResult:
     """
     if not legs:
         # Default conservative value when no leg data is available
-        return ReliabilityResult(score=75, band="Medium", explanations=["No legs — default reliability"]) 
+        return ReliabilityResult(score=75, band="Medium", explanations=["No legs — default reliability"], has_tight_connection=False)
 
     leg_scores: List[int] = []
     explanations: List[str] = []
+
+    tight_connection_found = False
 
     for idx, leg in enumerate(legs, start=1):
         hist = _get_field(leg, "historical_on_time_pct", 75) or 0
@@ -92,6 +95,7 @@ def calculate_reliability(legs: List[Any]) -> ReliabilityResult:
         if slack < 5:
             score -= 20
             explanations.append(f"Tight {slack} min connection - risk of missing transfer")
+            tight_connection_found = True
         elif slack < 10:
             score -= 10
             explanations.append(f"Tight {slack} min connection - may be tight")
@@ -114,6 +118,10 @@ def calculate_reliability(legs: List[Any]) -> ReliabilityResult:
         leg_score = _clamp(score, 0, 100)
         leg_scores.append(leg_score)
 
+    # After inspecting all legs, add an overall explanation if any tight connection was found
+    if tight_connection_found:
+        explanations.append("One or more legs have very tight connections (<5 minutes) — increased risk of missed transfers")
+
     # Average journey score
     avg_score = int(round(sum(leg_scores) / len(leg_scores)))
 
@@ -132,4 +140,4 @@ def calculate_reliability(legs: List[Any]) -> ReliabilityResult:
             seen.add(e)
             deduped_expls.append(e)
 
-    return ReliabilityResult(score=avg_score, band=band, explanations=deduped_expls)
+    return ReliabilityResult(score=avg_score, band=band, explanations=deduped_expls, has_tight_connection=tight_connection_found)

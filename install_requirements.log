@@ -1,0 +1,10 @@
+=== ensurepip ===
+/root/optiroute-venv/bin/python: No module named ensurepip
+=== upgrade pip ===
+/root/optiroute-venv/bin/python: No module named pip
+=== pip --version ===
+/root/optiroute-venv/bin/python: No module named pip
+=== install requirements ===
+/root/optiroute-venv/bin/python: No module named pip
+=== pip list (top) ===
+/root/optiroute-venv/bin/python: No module named pip

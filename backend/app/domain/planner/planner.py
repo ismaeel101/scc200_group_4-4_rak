@@ -729,7 +729,7 @@ class JourneyPlanner:
                                 "changes": 0,
                                 "reliability_score": score,
                                 "reliability_band": band,
-                                "reliability_explanation": explanation,
+                                "reliability_explanations": explanation,
                                 "legs": [vehicle],
                             }
                         )
@@ -872,7 +872,7 @@ class JourneyPlanner:
                                             "changes": 0,
                                             "reliability_score": score,
                                             "reliability_band": band,
-                                            "reliability_explanation": explanation,
+                                            "reliability_explanations": explanation,
                                             "legs": legs,
                                         }
                                     )
@@ -1009,7 +1009,7 @@ class JourneyPlanner:
                                     "changes": max(0, len([l for l in cur_legs if l.get("mode") != "walk"]) - 1),
                                     "reliability_score": score,
                                     "reliability_band": band,
-                                    "reliability_explanation": explanation,
+                                    "reliability_explanations": explanation,
                                     "legs": cur_legs,
                                 }
                             )
