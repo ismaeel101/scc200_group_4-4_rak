@@ -99,6 +99,42 @@ python backend/run_reliability_tests_runner.py
 - Consider exposing the `has_tight_connection` flag in the API if the frontend needs to present a specific UI treatment for tight transfers.
 - Add integration tests that exercise the API endpoints with injected fakes via `app.dependency_overrides` to validate full request/response behaviour.
 
+## Weather integration — Next steps
+This project should account for weather-driven reliability penalties. The following outlines the recommended frontend and backend changes to add a simple weather-based penalty and explanation.
+
+- Frontend (`frontend/src/components/RouteCard.tsx` or equivalent):
+	- Display `reliability_band` as a coloured pill badge matching the UI mock:
+		- High = green (#22c55e)
+		- Medium = amber (#f59e0b) with ⚠️ icon
+		- Low = red (#ef4444) with ⚠️ icon
+	- Show `reliability_explanations` as small grey text below the journey summary when the card is expanded (helpful to show the tight-connection summary and weather notes).
+
+- Weather fetch function (domain or util):
+	- Signature: `fetch_weather(lat: float, lon: float) -> WeatherInfo` where `WeatherInfo` includes at least:
+		- `available: bool`
+		- `is_adverse: bool`
+		- `description: str`
+		- `temperature_c: float`
+		- `windspeed_kmh: float`
+	- Call the Open-Meteo free API (no API key required):
+		`https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true`
+	- Consider weather adverse if `windspeed_kmh > 50` OR `weather_code` is in the set:
+		`[61,62,63,64,65,71,72,73,74,75,80,81,82,85,86,95,96,99]` (heavy rain/sleet/thunderstorm/snow codes).
+	- Map `weather_code` to short descriptions (examples): `0` → "Clear sky", `61` → "Light rain", `95` → "Thunderstorm"; keep a small lookup table.
+	- On any failure or missing data return a safe fallback: `WeatherInfo(available=False, is_adverse=False, description="Weather data unavailable", temperature_c=0, windspeed_kmh=0)`.
+
+- Backend endpoint (`backend/app/api.py`):
+	- Add `GET /api/weather` which accepts `lat` and `lon` query parameters (floats) and returns `WeatherInfo` JSON.
+	- Default to `lat=54.0466, lon=-2.8007` (Lancaster) when parameters are not provided.
+	- The endpoint must be resilient and never return HTTP 500; always respond with a `WeatherInfo`-shaped JSON payload even on upstream failures.
+
+- Applying the weather penalty to reliability:
+	- After computing journey `reliability_score` with existing logic, if `is_adverse == True` subtract 10 points from the journey score (then clamp to 0).
+	- Append the text "Adverse weather conditions may increase delays" to `reliability_explanations` (avoid duplicates).
+	- Keep `reliability_band` in sync with the adjusted score (recompute band boundaries after penalty).
+
+These steps keep the core reliability calculation separate from the weather-sourcing code (single responsibility), but ensure the final journey DTO returned by the API includes weather-aware scores and a clear textual explanation for UI consumption.
+
 ---
 
 If you'd like, I can also run the reliability tests locally (using the lightweight runner) and/or open a PR with this README update.
