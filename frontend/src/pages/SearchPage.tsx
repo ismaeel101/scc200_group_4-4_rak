@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { useNavigate } from 'react-router-dom';
 import SearchForm from "../components/SearchForm";
 import HomeMap from "../components/HomeMap";
+import WeatherWidget from "../components/WeatherWidget"; // Added import for W7
 import "./SearchPage.css";
 import translations from '../translations';
 import { useUi } from '../contexts/UiContext';
@@ -13,7 +14,6 @@ const SearchPage: React.FC = () => {
   const planLabel = typeof t.planYourJourney === 'string' ? t.planYourJourney : 'Plan your journey';
   const [loading, setLoading] = useState(false);
   const [stops, setStops] = useState<any[]>([]);
-  // const { reduceMotion } = useUi();
   const overlayRef = React.useRef<HTMLDivElement | null>(null);
 
   React.useEffect(() => {
@@ -43,11 +43,16 @@ const SearchPage: React.FC = () => {
         <aside className="searchpage__panel" role="complementary" aria-label={`${planLabel} panel`}>
           <div className="searchpage__panel-inner">
             <h2 className="searchpage__panel-title">{planLabel}</h2>
+            
+            {/* Added WeatherWidget here for Task W7 */}
+            <div style={{ marginBottom: '1rem' }}>
+              <WeatherWidget />
+            </div>
+
             <div className="searchpage__card">
               <SearchForm
                 isLoading={loading}
                 onSelectFrom={(s) => {
-                  // only show routable stops on the map — use shared validStopIds
                   const valid = validStopIds || new Set<string>();
                   if (!valid.has(s.id)) {
                     console.warn('Blocked invalid stop:', s);
@@ -74,12 +79,10 @@ const SearchPage: React.FC = () => {
                     const body = await res.json();
                     const journeys = body.journeys || [];
                     setLoading(false);
-                    // Navigate to results page with real journeys and human-readable origin/destination
                     navigate('/results', { state: { journeys, origin: data.from || '', destination: data.to || '' } });
                     return journeys;
                   } catch (e) {
                     setLoading(false);
-                    // fallback: navigate with empty journeys but still include origin/destination
                     navigate('/results', { state: { journeys: [], origin: data.from || '', destination: data.to || '' } });
                     return [];
                   }
