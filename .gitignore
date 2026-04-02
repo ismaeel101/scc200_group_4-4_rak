@@ -24,3 +24,6 @@ data/
 
 !backend/stops.db
 !backend/bus.dbbackend/*.db
+/backend/*.db
+backend/*.db
+.venv
