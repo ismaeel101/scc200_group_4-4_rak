@@ -932,7 +932,7 @@ class JourneyPlanner:
                                         walk_depart2 = arrive_dt
                                         walk_arrive2 = arrive_dt + timedelta(seconds=walk_secs2)
                                         if not (dest_exact_usable and destination_id == d_stop):
-                                            legs.append(self._walk_leg_dict(dest_stop_row[2], dest_name, walk_depart2, walk_arrive2))
+                                            legs.append(self._walk_leg_dict(dest_stop_row["name"] if dest_stop_row else d_stop, dest_name, walk_depart2, walk_arrive2, from_lat=d_lat, from_lon=d_lon, to_lat=dest_lat, to_lon=dest_lon))
 
                                     try:
                                         start_dt = datetime.fromisoformat(legs[0]["depart"])
