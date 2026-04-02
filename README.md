@@ -12,7 +12,7 @@ This README summarises the recent backend changes, the current API contract (DTO
 - Journey-level: `reliability_score` (int 0–100), `reliability_band` ("High"/"Medium"/"Low"), `reliability_explanations` (string list).
 - Leg-level `live_status` object fields: `available` (bool), `delay_minutes` (int), `disrupted_flag` (bool), `source` (string).
 - Leg-level: `leg_risk_band` ("High"/"Medium"/"Low") and `risk_explanation` (string list) are included when provided by DecisionSupport.
-- Note: the internal `ReliabilityResult` includes `has_tight_connection` (bool) for domain use; the public API currently exposes only `reliability_explanations` and does not include the `has_tight_connection` flag directly.
+- Note: the internal `ReliabilityResult` includes `has_tight_connection` (bool) for domain use. The public `Journey` DTO now exposes `has_connection_risk` (mapped from `has_tight_connection`) and the API injects a tight-connection summary into `reliability_explanations` for clients that consume textual explanations.
 
 ## Reliability scoring behaviour (summary)
 - Per-leg baseline is `historical_on_time_pct` (default 75).
@@ -35,6 +35,10 @@ This README summarises the recent backend changes, the current API contract (DTO
 - `backend/data/naptan.xml` — small sample stop file used by `load_stops.py`.
 - `backend/data/timetables/test_service.xml` — small TransXChange example used by timetable loaders.
 - `backend/data/rail_schedule.json` (and gzipped variant) — small rail schedule example.
+
+Additional files added/modified in this branch:
+- `backend/tests/test_reliability.py` — updated to check `has_connection_risk` mapping.
+- `backend/run_api_mapping_checks.py` — small local script to validate the API mapping injects tight-connection explanations.
 
 These are intentionally small so loader scripts can be exercised in the dev container without large datasets.
 

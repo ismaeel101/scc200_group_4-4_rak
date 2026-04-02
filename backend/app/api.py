@@ -265,6 +265,7 @@ class Journey(BaseModel):
     reliability_score:       int = Field(..., ge=0, le=100)
     reliability_band:        Literal["High", "Medium", "Low"]
     reliability_explanations: List[str]
+    has_connection_risk:     bool = False
     legs: List[Leg]
 
 
@@ -368,8 +369,25 @@ def _parse_journey(raw) -> dict:
     Person F (Daniel) — adds reliability_score, reliability_band,
                         reliability_explanation via DecisionSupport.
     """
+    # canonical summary text used by the reliability calculator
+    tight_summary = "One or more legs have very tight connections (<5 minutes) — increased risk of missed transfers"
+
     if isinstance(raw, dict):
-        return raw
+        # ensure older dict inputs get a consistent boolean field
+        out = dict(raw)
+        out.setdefault("has_connection_risk", out.get("has_tight_connection", False))
+        # Ensure explanations list exists
+        expls = list(out.get("reliability_explanations") or [])
+        if (out.get("has_connection_risk") or out.get("has_tight_connection")) and not any(tight_summary in e for e in expls):
+            expls.append(tight_summary)
+        out["reliability_explanations"] = expls
+        return out
+
+    expls = list(getattr(raw, "reliability_explanations", []) or [])
+    has_risk = getattr(raw, "has_connection_risk", getattr(raw, "has_tight_connection", False))
+    if has_risk and not any(tight_summary in e for e in expls):
+        expls.append(tight_summary)
+
     return {
         "total_duration_min":      raw.total_duration_min,
         "depart_time":             raw.depart_time,
@@ -377,7 +395,8 @@ def _parse_journey(raw) -> dict:
         "changes":                 raw.changes,
         "reliability_score":       getattr(raw, "reliability_score",       0),
         "reliability_band":        getattr(raw, "reliability_band",        "Low"),
-        "reliability_explanations": getattr(raw, "reliability_explanations", []),
+        "reliability_explanations": expls,
+        "has_connection_risk":     has_risk,
         "legs":                    [_parse_leg(leg) for leg in raw.legs],
     }
 

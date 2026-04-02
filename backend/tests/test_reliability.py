@@ -59,3 +59,41 @@ def test_no_tight_connection_when_slack_safe():
     res = calculate_reliability(legs)
     assert not any("very tight connections" in e for e in res.explanations)
     assert getattr(res, "has_tight_connection", False) is False
+
+
+def test_parse_journey_includes_has_connection_risk_for_object():
+    from app.api import _parse_journey
+    class RawJourney:
+        def __init__(self):
+            from datetime import datetime
+            self.total_duration_min = 30
+            self.depart_time = datetime.utcnow()
+            self.arrive_time = datetime.utcnow()
+            self.changes = 1
+            self.reliability_score = 80
+            self.reliability_band = "High"
+            self.reliability_explanations = ["Route historically on time 80% of days"]
+            self.legs = []
+            self.has_tight_connection = True
+
+    raw = RawJourney()
+    parsed = _parse_journey(raw)
+    assert parsed.get("has_connection_risk") is True
+
+
+def test_parse_journey_includes_has_connection_risk_for_dict():
+    from app.api import _parse_journey
+    raw = {
+        "total_duration_min": 20,
+        "depart_time": None,
+        "arrive_time": None,
+        "changes": 0,
+        "reliability_score": 75,
+        "reliability_band": "Medium",
+        "reliability_explanations": [],
+        # older dicts may have `has_tight_connection` instead of `has_connection_risk`
+        "has_tight_connection": True,
+        "legs": [],
+    }
+    parsed = _parse_journey(raw)
+    assert parsed.get("has_connection_risk") is True
