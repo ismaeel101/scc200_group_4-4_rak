@@ -20,20 +20,6 @@ WALK_TRANSFER_MAX_M = 400
 
 
 class JourneyPlanner:
-    """
-    Timetable-backed JourneyPlanner implementing multi-leg search with
-    walking catchments, direct trips and a bounded earliest-arrival search.
-
-    This class also contains a small provider-based compatibility path so
-    older provider-based unit tests can still instantiate:
-
-        Planner(provider).plan(request)
-
-    while the real app can still use the DB-backed path:
-
-        JourneyPlanner().plan(origin_id=..., destination_id=..., ...)
-    """
-
     def __init__(self, provider=None):
         self.provider = provider
         self.DB = Path("/workspace/backend/stops.db")
@@ -90,13 +76,6 @@ class JourneyPlanner:
         return R * c
 
     def _get_stop_name(self, conn, stop_id):
-        """Resolve stop_id to a human-readable name.
-
-        Lookup order:
-          1. stops.atco_code  (NaPTAN canonical data)
-          2. bus.bus_stops.atco_code  (TransXChange timetable metadata)
-          3. fall back to the raw stop_id string
-        """
         try:
             cur = conn.execute("SELECT common_name AS name FROM stops WHERE atco_code=?", (stop_id,))
             r = cur.fetchone()
@@ -104,7 +83,6 @@ class JourneyPlanner:
                 return r[0]
         except Exception:
             pass
-        # Fallback: TransXChange bus_stops table in bus.db
         try:
             cur = conn.execute("SELECT common_name AS name FROM bus.bus_stops WHERE atco_code=?", (stop_id,))
             r = cur.fetchone()
@@ -115,11 +93,6 @@ class JourneyPlanner:
         return stop_id
 
     def _resolve_stop(self, conn, stop_id):
-        """Resolve stop_id to (id, name, lat, lon).
-
-        Tries stops table first, then bus.bus_stops.
-        Returns a dict or None.
-        """
         try:
             r = conn.execute(
                 "SELECT atco_code AS id, common_name AS name, latitude AS lat, longitude AS lon FROM stops WHERE atco_code=? LIMIT 1",
@@ -129,7 +102,6 @@ class JourneyPlanner:
                 return {"id": r["id"], "name": r["name"], "lat": r["lat"], "lon": r["lon"]}
         except Exception:
             pass
-        # Fallback to bus.bus_stops
         try:
             r = conn.execute(
                 "SELECT atco_code AS id, common_name AS name, latitude AS lat, longitude AS lon FROM bus.bus_stops WHERE atco_code=? LIMIT 1",
@@ -182,12 +154,6 @@ class JourneyPlanner:
         return score, band, explanation
 
     def _catchment_stops(self, conn, lat, lon, meters=800):
-        """Find stops within *meters* of (lat, lon).
-
-        Searches both the canonical NaPTAN ``stops`` table and the
-        TransXChange ``bus.bus_stops`` table so that timetable-referenced
-        stops are always discoverable.
-        """
         lat_delta = meters / 111320.0
         lon_delta = meters / (111320.0 * math.cos(math.radians(lat)) if math.cos(math.radians(lat)) != 0 else 1)
         min_lat = lat - lat_delta
@@ -198,7 +164,6 @@ class JourneyPlanner:
         seen_ids: set[str] = set()
         out = []
 
-        # 1. NaPTAN stops
         cur = conn.execute(
             """
             SELECT atco_code AS id, common_name AS name, latitude AS lat, longitude AS lon
@@ -229,7 +194,6 @@ class JourneyPlanner:
                 )
                 seen_ids.add(r[0])
 
-        # 2. TransXChange bus_stops (only those with coordinates)
         try:
             cur2 = conn.execute(
                 """
@@ -263,7 +227,7 @@ class JourneyPlanner:
                     )
                     seen_ids.add(r[0])
         except Exception:
-            pass  # bus.bus_stops may not exist
+            pass 
 
         out.sort(key=lambda x: (x["distance_m"], x["id"]))
         return out
@@ -311,23 +275,14 @@ class JourneyPlanner:
         tiploc = stop_id
         if isinstance(stop_id, str) and stop_id.startswith("RAIL:"):
             tiploc = stop_id.split(":", 1)[1]
-
-        if tiploc == stop_id:
-            try:
-                row = conn.execute(
-                    "SELECT crs_code FROM stops WHERE atco_code=? LIMIT 1",
-                    (stop_id,),
-                ).fetchone()
-                if row and row[0]:
-                    tiploc = row[0]
-            except Exception:
-                pass
+        elif isinstance(stop_id, str) and stop_id.startswith("9100"):
+            tiploc = stop_id[4:]
 
         try:
             cur = conn.execute(
                 """
-                SELECT train_uid, sequence, departure
-                FROM rail_schedule_stops
+                SELECT train_uid, seq AS sequence, departure
+                FROM rail.schedules
                 WHERE tiploc = ?
                   AND departure IS NOT NULL
                   AND departure != ''
@@ -352,11 +307,11 @@ class JourneyPlanner:
             try:
                 downstream = conn.execute(
                     """
-                    SELECT tiploc, sequence, arrival, departure
-                    FROM rail_schedule_stops
+                    SELECT tiploc, seq AS sequence, arrival, departure
+                    FROM rail.schedules
                     WHERE train_uid = ?
-                      AND sequence > ?
-                    ORDER BY sequence
+                      AND seq > ?
+                    ORDER BY seq
                     LIMIT ?
                     """,
                     (row["train_uid"], row["sequence"], downstream_limit),
@@ -374,15 +329,15 @@ class JourneyPlanner:
                 if not arrive_dt or arrive_dt <= depart_dt:
                     continue
 
+                # Safely locate coordinates using NaPTAN prefix mapping
                 ds_row = conn.execute(
                     """
                     SELECT atco_code AS id, common_name AS name, latitude AS lat, longitude AS lon
                     FROM stops
-                    WHERE atco_code=? OR crs_code=?
-                    ORDER BY CASE WHEN atco_code=? THEN 0 ELSE 1 END
+                    WHERE atco_code IN (?, ?)
                     LIMIT 1
                     """,
-                    (f"RAIL:{ds_tiploc}", ds_tiploc, f"RAIL:{ds_tiploc}"),
+                    (f"9100{ds_tiploc}", f"RAIL:{ds_tiploc}"),
                 ).fetchone()
 
                 if ds_row:
@@ -627,8 +582,14 @@ class JourneyPlanner:
 
         conn = sqlite3.connect(str(self.DB))
         conn.row_factory = sqlite3.Row
+        
         try:
             conn.execute("ATTACH DATABASE '/workspace/backend/bus.db' AS bus")
+        except Exception:
+            pass
+            
+        try:
+            conn.execute("ATTACH DATABASE '/workspace/backend/rail.db' AS rail")
         except Exception:
             pass
 
@@ -638,7 +599,7 @@ class JourneyPlanner:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_stop_times_trip_seq ON bus.stop_times(trip_id, sequence)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_bus_stops_atco ON bus.bus_stops(atco_code)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_stops_atco ON stops(atco_code)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_rail_schedule_tiploc ON rail_schedule_stops(tiploc)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_schedules_tiploc ON rail.schedules(tiploc)")
             conn.commit()
         except Exception:
             pass
@@ -653,7 +614,6 @@ class JourneyPlanner:
                     pass
                 raise NoRouteFoundError("Search timeout")
 
-        # Resolve origin stop — try canonical stops then bus.bus_stops
         orow = self._resolve_stop(conn, origin_id)
         if not orow:
             conn.close()
@@ -666,7 +626,6 @@ class JourneyPlanner:
         origin_lon = float(orow["lon"]) if orow["lon"] is not None else None
         origin_name = orow["name"]
 
-        # Resolve destination stop
         drow = self._resolve_stop(conn, destination_id)
         if not drow:
             conn.close()
@@ -676,8 +635,8 @@ class JourneyPlanner:
                 "Ensure merge_stops.py has been run after loading timetables."
             )
         dest_lat = float(drow["lat"]) if drow["lat"] is not None else None
-        dest_lon = float(drow[3]) if drow[3] is not None else None
-        dest_name = drow[1]
+        dest_lon = float(drow["lon"]) if drow["lon"] is not None else None
+        dest_name = drow["name"]
 
         radii = [500, 1000]
 

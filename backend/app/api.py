@@ -171,7 +171,11 @@ def _parse_leg(raw) -> dict:
 
 def _parse_journey(raw) -> dict:
     if isinstance(raw, dict):
-        return raw
+        # Process the nested legs list even if the parent is a dictionary
+        parsed = dict(raw)
+        parsed["legs"] = [_parse_leg(leg) for leg in raw.get("legs", [])]
+        return parsed
+        
     return {
         "total_duration_min":      raw.total_duration_min,
         "depart_time":             raw.depart_time,
@@ -229,7 +233,6 @@ async def api_get_stops(
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
     
-    # Attach bus.db for TransXChange bus_stops fallback
     bus_db = base / "bus.db"
     if bus_db.exists():
         try:
@@ -241,7 +244,7 @@ async def api_get_stops(
         results = []
         seen_ids: set = set()
 
-        # 1. NaPTAN stops with rail detection
+        # NaPTAN stops with rail detection
         cur = conn.execute(
             """
             SELECT atco_code AS id, common_name AS name, latitude AS lat, longitude AS lon,
@@ -256,7 +259,7 @@ async def api_get_stops(
             results.append(d)
             seen_ids.add(d["id"])
 
-        # 2. TransXChange bus_stops fallback
+        # TransXChange bus_stops fallback
         try:
             cur2 = conn.execute(
                 "SELECT atco_code AS id, common_name AS name, latitude AS lat, longitude AS lon, 'bus' as type FROM bus.bus_stops "
@@ -281,29 +284,30 @@ async def api_get_stops(
 @app.get("/api/routable-stops", tags=["Search"], dependencies=[Depends(rate_limiter)])
 async def api_routable_stops():
     """Return distinct stop IDs from bus and rail timetables."""
-    bus_db_path = "/workspace/backend/bus.db"
-    rail_db_path = "/workspace/backend/rail.db"
+    base = Path(__file__).resolve().parents[1]
+    bus_db_path = base / "bus.db"
+    rail_db_path = base / "rail.db"
 
     routable_ids = set()
 
-    # 1. Extract Bus Stops
-    if os.path.exists(bus_db_path):
+    if bus_db_path.exists():
         try:
-            conn = sqlite3.connect(bus_db_path)
+            conn = sqlite3.connect(str(bus_db_path))
             cur = conn.execute("SELECT DISTINCT stop_id FROM stop_times")
             routable_ids.update(r[0] for r in cur.fetchall() if r and r[0])
             conn.close()
         except sqlite3.DatabaseError:
             pass
 
-    # 2. Extract Rail Stations
-    if os.path.exists(rail_db_path):
+    if rail_db_path.exists():
         try:
-            conn = sqlite3.connect(rail_db_path)
+            conn = sqlite3.connect(str(rail_db_path))
             cur = conn.execute("SELECT DISTINCT tiploc FROM schedules")
             rail_ids = [r[0] for r in cur.fetchall() if r and r[0]]
             routable_ids.update(rail_ids)
             routable_ids.update(f"RAIL:{r}" for r in rail_ids)
+            # Emit NaPTAN style rail codes so the frontend map links them properly
+            routable_ids.update(f"9100{r}" for r in rail_ids)
             conn.close()
         except sqlite3.DatabaseError:
             pass
@@ -320,7 +324,7 @@ async def get_stops(
     stop_service: StopService = Depends(get_stop_service),
 ):
     """Autocomplete search endpoint for all transport modes."""
-    base = Path(__file__).resolve().parents[1] # Fix: base variable now defined locally
+    base = Path(__file__).resolve().parents[1] 
     db_path = base / "stops.db"
     if not db_path.exists():
         raise HTTPException(status_code=503, detail="Database file not found")
@@ -329,7 +333,6 @@ async def get_stops(
         conn = sqlite3.connect(str(db_path))
         conn.row_factory = sqlite3.Row
 
-        # Attach bus.db for TransXChange bus_stops fallback
         bus_db = base / "bus.db"
         if bus_db.exists():
             try:
@@ -340,7 +343,6 @@ async def get_stops(
         results: list[dict] = []
         seen_ids: set = set()
 
-        # 1. NaPTAN stops with mode detection
         cur = conn.execute(
             """
             SELECT atco_code AS id, common_name AS name, latitude AS lat, longitude AS lon, 
@@ -354,7 +356,6 @@ async def get_stops(
             results.append(d)
             seen_ids.add(d["id"])
 
-        # 2. TransXChange bus_stops fallback
         try:
             cur2 = conn.execute(
                 "SELECT atco_code AS id, common_name AS name, latitude AS lat, longitude AS lon, 'bus' as type FROM bus.bus_stops WHERE common_name LIKE ? LIMIT ?",
