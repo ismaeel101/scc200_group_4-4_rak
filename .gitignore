@@ -24,3 +24,5 @@ data/
 .DS_Store
 
 !backend/bus.dbbackend/*.db
+
+.json
