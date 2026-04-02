@@ -7,6 +7,7 @@ from datetime import datetime
 import time
 import sqlite3
 import os
+from pathlib import Path
 
 from app.data.stops import StopService
 from app.domain.planner.planner import JourneyPlanner
@@ -47,172 +48,6 @@ def rate_limiter(request: Request):
         rate_limit_records[client_ip] = req_times
     else:
         rate_limit_records[client_ip] = [current_time]
-
- 
-@app.get(
-    "/api/stops",
-    tags=["Search"],
-    dependencies=[Depends(rate_limiter)],
-)
-async def api_get_stops(
-    min_lat: float = Query(..., description="Minimum latitude (south)"),
-    max_lat: float = Query(..., description="Maximum latitude (north)"),
-    min_lon: float = Query(..., description="Minimum longitude (west)"),
-    max_lon: float = Query(..., description="Maximum longitude (east)"),
-    limit: int = Query(500, ge=1, le=500),
-):
-    """Return stops within the provided bounding box using sqlite3.
-
-    This lightweight endpoint is used by the frontend map to fetch visible
-    stops. It directly queries the local `backend/stops.db` SQLite file,
-    and also checks `bus.db` bus_stops for TransXChange-sourced metadata.
-    """
-    import sqlite3
-    from pathlib import Path
-
-    # Resolve DB path relative to this file: workspace/backend/stops.db
-    base = Path(__file__).resolve().parents[1]
-    db_path = base / "stops.db"
-    # Log resolved path for debugging
-    print(f"Resolved DB path: {db_path}")
-    if not db_path.exists():
-        # Try legacy optiroute.db location
-        alt = base / "optiroute.db"
-        if alt.exists():
-            db_path = alt
-        else:
-            raise HTTPException(status_code=503, detail="Database file not found")
-
-    conn = sqlite3.connect(str(db_path))
-    conn.row_factory = sqlite3.Row
-
-    # Attach bus.db for TransXChange bus_stops fallback
-    bus_db = base / "bus.db"
-    if bus_db.exists():
-        try:
-            conn.execute(f"ATTACH DATABASE '{bus_db}' AS bus")
-        except Exception:
-            pass
-
-    try:
-        results = []
-        seen_ids: set = set()
-
-        # 1. NaPTAN stops
-        cur = conn.execute(
-            "SELECT atco_code AS id, common_name AS name, latitude AS lat, longitude AS lon FROM stops "
-            "WHERE latitude BETWEEN ? AND ? AND longitude BETWEEN ? AND ? LIMIT ?",
-            (min_lat, max_lat, min_lon, max_lon, limit),
-        )
-        for r in cur.fetchall():
-            d = dict(r)
-            results.append(d)
-            seen_ids.add(d["id"])
-
-        # 2. TransXChange bus_stops (fill in stops missing from NaPTAN)
-        try:
-            cur2 = conn.execute(
-                "SELECT atco_code AS id, common_name AS name, latitude AS lat, longitude AS lon FROM bus.bus_stops "
-                "WHERE latitude IS NOT NULL AND longitude IS NOT NULL "
-                "AND latitude BETWEEN ? AND ? AND longitude BETWEEN ? AND ? LIMIT ?",
-                (min_lat, max_lat, min_lon, max_lon, limit),
-            )
-            for r in cur2.fetchall():
-                d = dict(r)
-                if d["id"] not in seen_ids:
-                    results.append(d)
-                    seen_ids.add(d["id"])
-        except Exception:
-            pass  # bus.bus_stops may not exist
-
-        return results
-    except sqlite3.DatabaseError as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        conn.close()
-
-
-@app.get(
-    "/api/routable-stops",
-    tags=["Search"],
-    dependencies=[Depends(rate_limiter)],
-)
-async def api_routable_stops():
-    """Return distinct stop IDs from the timetable (stop_times).
-
-    This reads from the local `bus.db` SQLite file and returns a JSON
-    object with an `ids` array.
-    """
-    import sqlite3
-    from pathlib import Path
-
-    base = Path(__file__).resolve().parents[1]
-    db_path = base / "bus.db"
-    if not db_path.exists():
-        # try alternate names
-        alt = base / "database1.db"
-        if alt.exists():
-            db_path = alt
-        else:
-            raise HTTPException(status_code=503, detail="Bus database not found")
-
-    try:
-        conn = sqlite3.connect(str(db_path))
-        cur = conn.execute("SELECT DISTINCT stop_id FROM stop_times")
-        rows = cur.fetchall()
-        ids = [r[0] for r in rows if r and r[0]]
-        return {"ids": ids}
-    except sqlite3.DatabaseError as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        try:
-            conn.close()
-        except Exception:
-            pass
-
-
-@app.get(
-    "/api/validate-stops",
-    tags=["System"],
-    dependencies=[Depends(rate_limiter)],
-)
-async def api_validate_stops():
-    """Validate that bus timetable stop IDs can be resolved to metadata.
-
-    Returns a JSON object with resolved/unresolved counts and sample
-    unresolved IDs to help diagnose data mismatches.
-    """
-    from app.data.stops import StopService
-    try:
-        svc = StopService()
-        resolved, unresolved, sample = svc.validate_bus_stop_coverage()
-        return {
-            "resolved": resolved,
-            "unresolved": unresolved,
-            "sample_unresolved": sample,
-            "status": "ok" if unresolved == 0 else "mismatch",
-        }
-    except Exception as e:
-        return {
-            "resolved": 0,
-            "unresolved": -1,
-            "sample_unresolved": [],
-            "status": f"error: {e}",
-        }
-
-
-# ==========================================
-# MIDDLEWARE
-# ==========================================
-
-MAX_REQ_SIZE = 1024 * 50  # 50KB
-
-@app.middleware("http")
-async def limit_request_size(request: Request, call_next):
-    content_length = request.headers.get("content-length")
-    if content_length and int(content_length) > MAX_REQ_SIZE:
-        return JSONResponse(status_code=413, content={"detail": "Payload Too Large"})
-    return await call_next(request)
 
 
 # ==========================================
@@ -385,13 +220,28 @@ async def api_get_stops(
     max_lon: float = Query(..., description="Maximum longitude (east)"),
     limit: int = Query(500, ge=1, le=500),
 ):
-    db_path = "/workspace/backend/stops.db"
-    if not os.path.exists(db_path):
+    """Return stops within the provided bounding box using sqlite3."""
+    base = Path(__file__).resolve().parents[1]
+    db_path = base / "stops.db"
+    if not db_path.exists():
         raise HTTPException(status_code=503, detail="Database file not found")
 
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
+    
+    # Attach bus.db for TransXChange bus_stops fallback
+    bus_db = base / "bus.db"
+    if bus_db.exists():
+        try:
+            conn.execute(f"ATTACH DATABASE '{bus_db}' AS bus")
+        except Exception:
+            pass
+
     try:
+        results = []
+        seen_ids: set = set()
+
+        # 1. NaPTAN stops with rail detection
         cur = conn.execute(
             """
             SELECT atco_code AS id, common_name AS name, latitude AS lat, longitude AS lon,
@@ -401,7 +251,28 @@ async def api_get_stops(
             """,
             (min_lat, max_lat, min_lon, max_lon, limit),
         )
-        return [dict(r) for r in cur.fetchall()]
+        for r in cur.fetchall():
+            d = dict(r)
+            results.append(d)
+            seen_ids.add(d["id"])
+
+        # 2. TransXChange bus_stops fallback
+        try:
+            cur2 = conn.execute(
+                "SELECT atco_code AS id, common_name AS name, latitude AS lat, longitude AS lon, 'bus' as type FROM bus.bus_stops "
+                "WHERE latitude IS NOT NULL AND longitude IS NOT NULL "
+                "AND latitude BETWEEN ? AND ? AND longitude BETWEEN ? AND ? LIMIT ?",
+                (min_lat, max_lat, min_lon, max_lon, limit),
+            )
+            for r in cur2.fetchall():
+                d = dict(r)
+                if d["id"] not in seen_ids:
+                    results.append(d)
+                    seen_ids.add(d["id"])
+        except Exception:
+            pass 
+
+        return results
     except sqlite3.DatabaseError as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
@@ -409,6 +280,7 @@ async def api_get_stops(
 
 @app.get("/api/routable-stops", tags=["Search"], dependencies=[Depends(rate_limiter)])
 async def api_routable_stops():
+    """Return distinct stop IDs from bus and rail timetables."""
     bus_db_path = "/workspace/backend/bus.db"
     rail_db_path = "/workspace/backend/rail.db"
 
@@ -421,23 +293,20 @@ async def api_routable_stops():
             cur = conn.execute("SELECT DISTINCT stop_id FROM stop_times")
             routable_ids.update(r[0] for r in cur.fetchall() if r and r[0])
             conn.close()
-        except sqlite3.DatabaseError as e:
-            print(f"Bus DB read error: {e}")
+        except sqlite3.DatabaseError:
+            pass
 
     # 2. Extract Rail Stations
     if os.path.exists(rail_db_path):
         try:
             conn = sqlite3.connect(rail_db_path)
-            # tiploc is the primary id for rail stations in the schedules
             cur = conn.execute("SELECT DISTINCT tiploc FROM schedules")
             rail_ids = [r[0] for r in cur.fetchall() if r and r[0]]
             routable_ids.update(rail_ids)
-            
-            # Planner.py occasionally wraps rail IDs in 'RAIL:' prefix
             routable_ids.update(f"RAIL:{r}" for r in rail_ids)
             conn.close()
-        except sqlite3.DatabaseError as e:
-            print(f"Rail DB read error: {e}")
+        except sqlite3.DatabaseError:
+            pass
 
     if not routable_ids:
          raise HTTPException(status_code=503, detail="No routable databases found")
@@ -450,12 +319,14 @@ async def get_stops(
     limit: int = Query(10, ge=1, le=50),
     stop_service: StopService = Depends(get_stop_service),
 ):
-    db_path = "/workspace/backend/stops.db"
-    if not os.path.exists(db_path):
+    """Autocomplete search endpoint for all transport modes."""
+    base = Path(__file__).resolve().parents[1] # Fix: base variable now defined locally
+    db_path = base / "stops.db"
+    if not db_path.exists():
         raise HTTPException(status_code=503, detail="Database file not found")
 
     try:
-        conn = sqlite3.connect(db_path)
+        conn = sqlite3.connect(str(db_path))
         conn.row_factory = sqlite3.Row
 
         # Attach bus.db for TransXChange bus_stops fallback
@@ -469,7 +340,7 @@ async def get_stops(
         results: list[dict] = []
         seen_ids: set = set()
 
-        # 1. NaPTAN stops
+        # 1. NaPTAN stops with mode detection
         cur = conn.execute(
             """
             SELECT atco_code AS id, common_name AS name, latitude AS lat, longitude AS lon, 
@@ -483,10 +354,10 @@ async def get_stops(
             results.append(d)
             seen_ids.add(d["id"])
 
-        # 2. TransXChange bus_stops
+        # 2. TransXChange bus_stops fallback
         try:
             cur2 = conn.execute(
-                "SELECT atco_code AS id, common_name AS name, latitude AS lat, longitude AS lon FROM bus.bus_stops WHERE common_name LIKE ? LIMIT ?",
+                "SELECT atco_code AS id, common_name AS name, latitude AS lat, longitude AS lon, 'bus' as type FROM bus.bus_stops WHERE common_name LIKE ? LIMIT ?",
                 (f"%{query}%", limit),
             )
             for r in cur2.fetchall():
@@ -495,7 +366,7 @@ async def get_stops(
                     results.append(d)
                     seen_ids.add(d["id"])
         except Exception:
-            pass  # bus.bus_stops may not exist
+            pass 
 
         if not results:
             raise HTTPException(status_code=404, detail="No stops found")
