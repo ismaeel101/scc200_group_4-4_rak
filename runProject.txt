@@ -16,3 +16,26 @@ Download these and place them in:
 backend/
 
 Then run the backend as normal.
+
+
+**One-time setup (run these first):**
+```
+pip install uvicorn sqlalchemy fastapi --break-system-packages
+```
+```
+cd /workspace/frontend && npm install
+```
+
+**Then to run the project (2 terminals):**
+
+Terminal 1 – Backend:
+```
+cd /workspace/backend && PYTHONPATH=/workspace/backend python3 -m uvicorn app.api:app --reload --port 8000
+```
+
+Terminal 2 – Frontend:
+```
+cd /workspace/frontend && npm run dev
+```
+
+Then open: http://127.0.0.1:5173

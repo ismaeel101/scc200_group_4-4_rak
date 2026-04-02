@@ -10,17 +10,16 @@ __pycache__/
 # env
 .env
 
-# large raw data (DON’T upload)
-data/
+# large raw data (DON'T upload)
 *.xml
 *.gz
 *.zip
+
+# databases
+*.db
 
 # temp
 /tmp/
 
 # OS
 .DS_Store
-
-!backend/stops.db
-!backend/bus.dbbackend/*.db
