@@ -19,6 +19,7 @@ from app.data.stops import StopService
 from app.domain.planner.planner import JourneyPlanner
 from app.domain.decision_support.decision_support import DecisionSupport
 from app.cache.cache_service import CacheService
+from app.domain.reliability import calculate_reliability
 
 # ==========================================
 # DOMAIN EXCEPTION IMPORTS
@@ -563,6 +564,33 @@ async def plan_journey(
     except DecisionSupportError:
         annotated_journeys = journeys  # already normalised dicts from Step 2
         flags = ["TIMETABLE_ONLY", "LIVE_MISSING", "HISTORICAL_MISSING"]
+
+    # Ensure every journey includes reliability fields. If DecisionSupport
+    # did not provide them, compute a default using historical defaults and
+    # available live_status fields.
+    for j in annotated_journeys:
+        # Prepare legs for reliability calculation: map any live_status.delay_minutes
+        # -> live_delay_minutes and live_status.disrupted_flag -> is_cancelled
+        legs_for_calc = []
+        for leg in j.get("legs", []):
+            l = dict(leg) if isinstance(leg, dict) else dict(leg.__dict__)
+            ls = l.get("live_status") or {}
+            if isinstance(ls, dict):
+                if "delay_minutes" in ls:
+                    l["live_delay_minutes"] = ls.get("delay_minutes", 0)
+                if "disrupted_flag" in ls:
+                    l["is_cancelled"] = bool(ls.get("disrupted_flag"))
+            legs_for_calc.append(l)
+
+        # If reliability fields missing or zero-ish, compute defaults
+        missing_score = not j.get("reliability_score") and j.get("reliability_score") != 0
+        missing_band = not j.get("reliability_band")
+        missing_expl = not j.get("reliability_explanation")
+        if missing_score or missing_band or missing_expl:
+            res = calculate_reliability(legs_for_calc)
+            j["reliability_score"] = int(res.score)
+            j["reliability_band"] = res.band
+            j["reliability_explanation"] = res.explanations
 
     # Step 4: Sort with tie-breakers per README routing objective:
     #   Primary:   earliest arrival (time) or reliability_score (reliability)
