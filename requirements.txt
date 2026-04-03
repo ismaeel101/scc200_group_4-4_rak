@@ -17,7 +17,7 @@ python-dotenv>=1.0
 #gunicorn>=20.1.0
 
 # HTTP client for integration tests or outgoing requests
-httpx>=0.24.0 
+httpx>=0.24.0
 
 # Scheduling
 APScheduler>=3.10

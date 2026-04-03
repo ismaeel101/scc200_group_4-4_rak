@@ -20,6 +20,7 @@ from app.domain.planner.planner import JourneyPlanner
 from app.domain.decision_support.decision_support import DecisionSupport
 from app.cache.cache_service import CacheService
 from app.domain.reliability import calculate_reliability
+from app.domain.weather import fetch_weather, WeatherInfo
 
 # ==========================================
 # DOMAIN EXCEPTION IMPORTS
@@ -264,6 +265,7 @@ class Journey(BaseModel):
     changes:            int
     reliability_score:       int = Field(..., ge=0, le=100)
     reliability_band:        Literal["High", "Medium", "Low"]
+    reliability:            Literal["High", "Medium", "Low"]
     reliability_explanations: List[str]
     has_connection_risk:     bool = False
     legs: List[Leg]
@@ -381,6 +383,7 @@ def _parse_journey(raw) -> dict:
         if (out.get("has_connection_risk") or out.get("has_tight_connection")) and not any(tight_summary in e for e in expls):
             expls.append(tight_summary)
         out["reliability_explanations"] = expls
+        out.setdefault("reliability", out.get("reliability_band", "Low"))
         return out
 
     expls = list(getattr(raw, "reliability_explanations", []) or [])
@@ -395,6 +398,7 @@ def _parse_journey(raw) -> dict:
         "changes":                 raw.changes,
         "reliability_score":       getattr(raw, "reliability_score",       0),
         "reliability_band":        getattr(raw, "reliability_band",        "Low"),
+        "reliability":            getattr(raw, "reliability_band",        "Low"),
         "reliability_explanations": expls,
         "has_connection_risk":     has_risk,
         "legs":                    [_parse_leg(leg) for leg in raw.legs],
@@ -451,6 +455,38 @@ async def system_status(
         return StatusResponse(**freshness)
     except CacheUnavailableError:
         raise HTTPException(status_code=503, detail="Cache unavailable")
+
+
+@app.get(
+    "/api/weather",
+    tags=["System"],
+    dependencies=[Depends(rate_limiter)],
+)
+async def api_get_weather(
+    lat: float = Query(54.0466, description="Latitude"),
+    lon: float = Query(-2.8007, description="Longitude"),
+):
+    """Return current weather for the provided coordinates.
+
+    Uses `fetch_weather` from the domain layer. This endpoint must never
+    raise a 500 — any failure returns a safe fallback payload.
+    """
+    from dataclasses import asdict
+
+    try:
+        info = fetch_weather(lat, lon)
+        # Ensure a plain JSON-serialisable dict is returned
+        return asdict(info)
+    except Exception as e:
+        print(f"Weather endpoint error: {e}")
+        fallback = WeatherInfo(
+            available=False,
+            is_adverse=False,
+            description="Weather data unavailable",
+            temperature_c=0.0,
+            windspeed_kmh=0.0,
+        )
+        return asdict(fallback)
 
 
 @app.get(
@@ -609,6 +645,7 @@ async def plan_journey(
             res = calculate_reliability(legs_for_calc)
             j["reliability_score"] = int(res.score)
             j["reliability_band"] = res.band
+            j["reliability"] = j["reliability_band"]
             j["reliability_explanations"] = res.explanations
 
     # Step 4: Sort with tie-breakers per README routing objective:
@@ -631,6 +668,49 @@ async def plan_journey(
                 j["total_duration_min"],    # shorter duration wins final tie
             )
         )
+
+    # Apply weather penalty once (single fetch) — non-fatal and non-blocking.
+    # If fetch fails, do not modify journeys.
+    weather_fetch_succeeded = False
+    try:
+        weather = fetch_weather(lat=54.0466, lon=-2.8007)
+        weather_fetch_succeeded = True
+    except Exception as e:
+        print(f"Weather fetch failed (non-fatal): {e}")
+        # create a safe fallback with is_adverse False but mark fetch as failed
+        weather = WeatherInfo(
+            available=False,
+            is_adverse=False,
+            description="Weather data unavailable",
+            temperature_c=0.0,
+            windspeed_kmh=0.0,
+        )
+
+    # Only apply penalty when fetch succeeded and weather reports adverse conditions
+    if weather_fetch_succeeded and getattr(weather, "is_adverse", False):
+        penalty_expl = "Adverse weather conditions may increase delays"
+        for j in annotated_journeys:
+            # Ensure explanations list exists
+            expls = list(j.get("reliability_explanations") or [])
+
+            # Subtract penalty and clamp
+            orig_score = int(j.get("reliability_score", 0))
+            new_score = max(0, orig_score - 10)
+            j["reliability_score"] = new_score
+
+            # Recompute band
+            if new_score >= 80:
+                j["reliability_band"] = "High"
+            elif new_score >= 50:
+                j["reliability_band"] = "Medium"
+            else:
+                j["reliability_band"] = "Low"
+            j["reliability"] = j["reliability_band"]
+
+            # Append explanation if not already present
+            if penalty_expl not in expls:
+                expls.append(penalty_expl)
+            j["reliability_explanations"] = expls
 
     return JourneyResponse(journeys=annotated_journeys, data_quality_flags=flags)
 
