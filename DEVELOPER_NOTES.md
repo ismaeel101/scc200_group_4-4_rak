@@ -1,6 +1,6 @@
 # OptiRoute — Developer Notes
 
-This file contains the detailed technical material removed from the shorter README: DTO mappings, reliability scoring rules, weather codes and test details for developer reference.
+This file contains the detailed technical material on DTO mappings, reliability scoring rules, weather codes and test details for developer reference.
 
 ## API DTOs & Mapping
 - Journey-level fields (public API):
@@ -72,21 +72,13 @@ uvicorn backend.app.api:app --reload --host 0.0.0.0 --port 8000
 - Loader scripts expect sample files under `backend/data/` — verify presence if a loader errors.
 - If the API logs missing database files, provide the expected SQLite files in `backend/` or run tests that override DB dependencies.
 
-## Where to put long lists or design tables
-- Large lookup tables (full weather-code->description mapping), extended DTO docs, and scoring rationale are suitable for separate `docs/` files or a `CONTRIBUTING.md` if you want them versioned and discoverable.
-
----
-If you'd like I can:
-- add a `docs/weather_codes.md` with code→description mappings, or
-- create `CONTRIBUTING.md` that includes the full scoring rules and API DTO reference.
-
 ## PR Notes (for pull request)
 Features implemented:
 - **FR-H1**: Weather module + `GET /api/weather` endpoint
 - **FR-H2**: Graceful fallback when weather unavailable
 - **FR-D1**: Reliability scoring with weather penalty (-10 when adverse)
 
-Files changed/added (high level):
+Files changed/added:
 - `backend/app/domain/weather.py` (new/updated)
 - `backend/app/api.py` (weather endpoint, weather penalty application)
 - `backend/app/domain/reliability.py` (scoring logic)
