@@ -66,6 +66,37 @@ app.add_middleware(
 # (scheduler start/stop removed — scheduler functions not available)
 # ==========================================
 
+@app.on_event("startup")
+async def validate_bus_stops_on_startup():
+    """Validate that bus timetable stop IDs can be resolved at boot time.
+
+    Logs a warning if resolution is below 95 %.  Does NOT block startup so
+    the app can still serve rail or partial results.
+    """
+    from pathlib import Path as _Path
+    try:
+        from app.data.validation import validate_bus_stop_resolution
+        base = _Path(__file__).resolve().parents[2]
+        bus_db = base / "bus.db"
+        stops_db = base / "stops.db"
+        if bus_db.exists() and stops_db.exists():
+            report = validate_bus_stop_resolution(bus_db, stops_db)
+            print(
+                f"[startup] Bus stop validation: "
+                f"{report.resolved}/{report.total_bus_stop_ids} resolved "
+                f"({report.resolution_pct:.1f}%), "
+                f"{len(report.unresolved_ids)} unresolved"
+            )
+            if not report.is_healthy:
+                print(
+                    f"[startup] ⚠ WARNING: Bus stop resolution is below 95%. "
+                    f"Run `python sync_bus_stops.py` to fix."
+                )
+        else:
+            print("[startup] ⚠ bus.db or stops.db not found — bus routing disabled")
+    except Exception as e:
+        print(f"[startup] Bus stop validation skipped: {e}")
+
 
 # Rate limiter (moved before endpoints that use it)
 rate_limit_records: dict[str, list[float]] = {}
@@ -109,8 +140,8 @@ async def api_get_stops(
     import sqlite3
     from pathlib import Path
 
-    # Resolve DB path relative to this file: workspace/backend/stops.db
-    base = Path(__file__).resolve().parents[1]
+    # Resolve DB path relative to this file – DBs live at project root
+    base = Path(__file__).resolve().parents[2]
     db_path = base / "stops.db"
     # Log resolved path for debugging
     print(f"Resolved DB path: {db_path}")
@@ -153,7 +184,7 @@ async def api_routable_stops():
     import sqlite3
     from pathlib import Path
 
-    base = Path(__file__).resolve().parents[1]
+    base = Path(__file__).resolve().parents[2]
     db_path = base / "bus.db"
     if not db_path.exists():
         # try alternate names
@@ -412,6 +443,32 @@ async def health_check():
     return {"status": "ok"}
 
 
+@app.get("/api/bus-stop-validation", tags=["System"])
+async def bus_stop_validation():
+    """Return a report on bus stop ID resolution health."""
+    import sqlite3
+    from pathlib import Path
+
+    base = Path(__file__).resolve().parents[2]
+    bus_db = base / "bus.db"
+    stops_db = base / "stops.db"
+
+    try:
+        from app.data.validation import validate_bus_stop_resolution
+        report = validate_bus_stop_resolution(bus_db, stops_db)
+        return {
+            "total_bus_stop_ids": report.total_bus_stop_ids,
+            "resolved": report.resolved,
+            "resolved_with_coords": report.resolved_with_coords,
+            "unresolved_count": len(report.unresolved_ids),
+            "resolution_pct": round(report.resolution_pct, 2),
+            "healthy": report.is_healthy,
+            "unresolved_sample": sorted(report.unresolved_ids)[:20],
+        }
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+
 @app.get(
     "/status",
     response_model=StatusResponse,
@@ -454,7 +511,7 @@ async def get_stops(
     import sqlite3
     from pathlib import Path
 
-    base = Path(__file__).resolve().parents[1]
+    base = Path(__file__).resolve().parents[2]
     db_path = base / "stops.db"
     if not db_path.exists():
         alt = base / "optiroute.db"
@@ -467,7 +524,10 @@ async def get_stops(
         conn = sqlite3.connect(str(db_path))
         conn.row_factory = sqlite3.Row
         cur = conn.execute(
-            "SELECT atco_code AS id, common_name AS name, latitude AS lat, longitude AS lon FROM stops WHERE common_name LIKE ? LIMIT ?",
+            "SELECT atco_code AS id, common_name AS name, "
+            "CASE WHEN atco_code LIKE 'RAIL:%' THEN 'rail' ELSE 'bus' END AS type, "
+            "latitude AS lat, longitude AS lon "
+            "FROM stops WHERE common_name LIKE ? LIMIT ?",
             (f"%{query}%", limit),
         )
         rows = cur.fetchall()
