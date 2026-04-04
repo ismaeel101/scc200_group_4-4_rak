@@ -36,7 +36,7 @@ class JourneyPlanner:
 
     def __init__(self, provider=None):
         self.provider = provider
-        _project_root = Path(__file__).resolve().parents[4]
+        _project_root = Path(__file__).resolve().parents[3]
         self.DB = _project_root / "stops.db"
         self.BUS_DB = _project_root / "bus.db"
         self.RAIL_DB = _project_root / "rail.db"
@@ -809,11 +809,13 @@ class JourneyPlanner:
                                 SELECT departure_time
                                 FROM bus.stop_times
                                 WHERE stop_id=?
+                                AND departure_time >= ?
                                 ORDER BY departure_time
                                 LIMIT 200
                                 """,
-                                (stop_id,),
+                                (stop_id, f"{window_start.hour:02d}:{window_start.minute:02d}:00"),
                             )
+                        
                             for r in cur_local.fetchall():
                                 depart_dt = self._parse_time_to_dt(r[0], requested_dt)
                                 if self._window_contains(depart_dt, window_start, window_end):
@@ -873,7 +875,6 @@ class JourneyPlanner:
 
             origin_exact_usable = _has_usable(origin_id)
             dest_exact_usable = _has_usable(destination_id)
-
             exact_journeys = []
             try:
                 if origin_exact_usable and dest_exact_usable and use_bus:
@@ -962,11 +963,12 @@ class JourneyPlanner:
                                 "legs": [vehicle],
                             }
                         )
-
-                    if exact_journeys:
-                        selected = self._select_distinct_journeys(exact_journeys, max_options)
-                        conn.close()
-                        return selected
+                        
+                        if exact_journeys:
+                            selected = self._select_distinct_journeys(exact_journeys, max_options)
+                            conn.close()
+                            return selected
+                    
             except NoRouteFoundError:
                 pass
             except Exception:

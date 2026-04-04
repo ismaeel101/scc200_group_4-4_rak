@@ -22,4 +22,6 @@ __pycache__/
 /tmp/
 
 # OS
-.DS_Store
+.DS_Store*.db
+*.db-shm
+*.db-wal
