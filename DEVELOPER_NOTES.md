@@ -90,3 +90,18 @@ Verification:
 
 Suggested PR description (short):
 "Add weather integration and scoring: `fetch_weather` + `/api/weather` endpoint, graceful fallback, and a -10 adverse-weather penalty applied to journey reliability. Includes tests (`test_weather_penalty.py`) validating penalty, resilience on fetch failure, and clamping behaviour."
+
+## Testing & Merge Notes
+
+- A local merge-verification run was performed on 2026-04-05 and detailed in `MERGE_TESTS` at the repo root. Highlights:
+  - Backend unit tests and the reliability runner passed locally after restoring missing `backend/app/data` files required for pytest collection.
+  - The `/api/weather` endpoint returns the expected fields: `available`, `is_adverse`, `description`, `temperature_c`, `windspeed_kmh`.
+  - The frontend builds successfully and `WeatherWidget`/`RouteCard` consume backend fields as expected.
+
+- Integration note: the `plan_journey` handler currently instantiates `JourneyPlanner()` directly inside the route handler. This means `app.dependency_overrides` alone may not prevent the planner from opening the DB during tests; in a test environment lacking the `stops` table this produced a "no such table: stops" error. Two safe remedial options:
+  1. Provide the expected `stops` SQLite data in `backend/` for integration testing.
+  2. Refactor `backend/app/api.py` so the handler uses the injected `journey_planner` dependency (recommended) allowing CI/tests to stub the planner cleanly.
+
+- For local verification a runtime monkeypatch was used to replace `app.api.JourneyPlanner` and `get_decision_support` so `/journeys` could be exercised without DB files. This is a temporary testing workaround and should not be relied on in CI.
+
+See `MERGE_TESTS` and `MERGE_NOTES.md` for the full step-by-step logs and final recommendation.
