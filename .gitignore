@@ -27,3 +27,23 @@ data/
 /backend/*.db
 backend/*.db
 .venv
+
+
+# Backend DB artifacts
+backend/*.db-wal
+backend/*.db-shm
+backend/*.db
+
+# Virtual environments
+backend/.venv
+.venv
+
+# Logs
+*.log
+
+# Environment files
+.env
+
+# Frontend build and dependencies
+frontend/dist/
+frontend/node_modules/
