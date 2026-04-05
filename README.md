@@ -60,3 +60,10 @@ python3 backend/run_reliability_tests_runner.py
 
 **Weather integration (summary)**
 - A planned improvement is a `fetch_weather(lat, lon)` helper that calls Open-Meteo and returns a small `WeatherInfo`. If `is_adverse` is true a -10 penalty should be applied to journey scores and an explanatory message appended to `reliability_explanations`. Keep weather sourcing separate from scoring logic.
+
+Updated ->
+frontend/src/pages/ResultsPage.tsx
+frontend/src/pages/SearchPage.tsx
+frontend/src/components/RouteCard.tsx
+Added ->
+frontend/src/components/WeatherWidget.tsx
