@@ -67,3 +67,18 @@ frontend/src/pages/SearchPage.tsx
 frontend/src/components/RouteCard.tsx
 Added ->
 frontend/src/components/WeatherWidget.tsx
+
+## Testing & Merge Notes
+
+- A full local verification run was performed on 2026-04-05 and recorded in `MERGE_TESTS` at the repo root. Key outcomes:
+	- Backend unit tests and the reliability runner passed locally after restoring missing `backend/app/data` files for test collection.
+	- The `/api/weather` endpoint returns the expected fields: `available`, `is_adverse`, `description`, `temperature_c`, `windspeed_kmh`.
+	- The `frontend` builds successfully with Vite (`npm run build`) and the `WeatherWidget` and `RouteCard` components consume the backend fields as expected.
+
+- Note about `/journeys` integration: the `plan_journey` handler currently instantiates `JourneyPlanner()` directly inside the route handler. This causes real planner code to open the DB even when `app.dependency_overrides` is used in tests, which led to a runtime "no such table: stops" error in environments without the expected SQLite stops table. Two safe options:
+	1. Provide the expected `stops` SQLite data in `backend/` for full integration testing.
+	2. Refactor the handler to use the injected `journey_planner` dependency (recommended) so tests and CI can stub the planner cleanly.
+
+- For local verification, a runtime monkeypatch was used to replace `app.api.JourneyPlanner` and `get_decision_support` so the `/journeys` POST could be exercised without the DB. This is a temporary testing workaround and should not be relied on for CI or production readiness.
+
+See `MERGE_TESTS` for a step-by-step log and final recommendation.
