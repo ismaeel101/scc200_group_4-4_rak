@@ -106,7 +106,6 @@ Summary of test-run steps (action taken, result)
      * Non-adverse: `reliability_score` = 90
      * Adverse: `reliability_score` = 70
      * Observed difference: 20 points (the simulated decision-support subtracted 10 points, additional app annotations added further impact). Investigate if the code applies an additional penalty in `app.api` or `decision_support`.
-   - Next: If you require exact internal verification of where the additional 10-point change originated, I can trace `decision_support` and `api` annotation steps.
 
 12) Test frontend builds without errors
    - Action: Ran `npm install` and `npm run build` in `/workspace/frontend`.

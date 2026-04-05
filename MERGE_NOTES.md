@@ -25,9 +25,8 @@ Recommendations
 Notes for reviewers
 ------------------
 - See `MERGE_TESTS` for the detailed step-by-step log and final verdict.
-- I updated `README.md` to include a short "Testing & Merge Notes" section pointing to `MERGE_TESTS` and describing the monkeypatch workaround.
 
-Next actions I can take
+Next actions?
 -----------------------
 - Apply the recommended refactor to `backend/app/api.py` and run the full test suite + integration checks.
 - Inspect `optiroute.db` and prepare a `stops` table export suitable for CI and local integration.
