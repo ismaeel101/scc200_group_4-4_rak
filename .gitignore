@@ -11,7 +11,7 @@ __pycache__/
 .env
 
 # large raw data (DON’T upload)
-data/
+/data/
 *.xml
 *.gz
 *.zip
@@ -22,10 +22,8 @@ data/
 # OS
 .DS_Store
 
-!backend/stops.db
-!backend/bus.dbbackend/*.db
+.gitkeep
 /backend/*.db
-backend/*.db
 .venv
 
 
@@ -33,6 +31,8 @@ backend/*.db
 backend/*.db-wal
 backend/*.db-shm
 backend/*.db
+
+!backend/app/data/*.db
 
 # Virtual environments
 backend/.venv
