@@ -46,6 +46,26 @@ Explanations: include history notes, delay/cancellation notices, and a tight-con
   - `WeatherInfo(available=False, is_adverse=False, description="Weather data unavailable", temperature_c=0, windspeed_kmh=0)`
 - Applying penalty: if `is_adverse` then subtract 10 from journey score (clamp to 0) and append "Adverse weather conditions may increase delays" to `reliability_explanations` (avoid duplicates); recompute `reliability_band`.
 
+Planner & DB (implementation notes)
+----------------------------------
+- The DB-backed `JourneyPlanner` implementation was updated from a collaborator branch (`kamol-backend-updated`) and lives at `backend/app/domain/planner/planner.py`.
+- Expected SQLite files (project `backend/` root):
+  - `stops.db` — contains `stops` table (atco_code, common_name, latitude, longitude, crs_code, ...)
+  - `bus.db` — contains bus timetable tables (e.g. `stop_times`, optionally `bus_stops`, `stop_points` under `bus.` schema when attached)
+  - `rail.db` — contains rail schedule tables such as `rail_schedule_stops` and `rail_departures`
+- Connection method: direct `sqlite3.connect()` followed by `ATTACH DATABASE '.../bus.db' AS bus` (planner checks for attached DBs and will proceed gracefully if attachments are missing). SQL queries in the planner reference `stops`, `bus.stop_times`, `rail_schedule_stops`, `rail_departures`, and other helper tables.
+
+Planner `plan()` signature (public):
+
+```
+def plan(self, origin_id=None, destination_id=None, time_type=None, time_iso=None, modes=None, max_options=None)
+```
+
+Return value: a list of journey dicts (or `Journey` objects when using provider compatibility), where each journey dict includes `depart_time`, `arrive_time`, `total_duration_min`, `changes`, and when available `reliability_score`, `reliability_band`, and `reliability_explanations`.
+
+Testing notes:
+- The planner opens the DB during the `/journeys` handler; to run integration tests without DB files consider using the `app.dependency_overrides` to inject a stub `JourneyPlanner` or use the lightweight test runner.
+
 ## Tests & expectations
 - Test files in `backend/tests/` of interest:
   - `test_reliability.py` — checks scoring and `has_connection_risk` mapping

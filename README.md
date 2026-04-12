@@ -58,6 +58,38 @@ python3 backend/run_reliability_tests_runner.py
 - If the API reports missing DB files, ensure any required SQLite files are present in `backend/` or use test doubles where appropriate.
 - The repo's test suite uses `app.dependency_overrides` and fakes, so many API tests run without a real DB.
 
+Planner & DB notes
+------------------
+- The production DB-backed planner has been updated from a feature branch (`kamol-backend-updated`) and the planner implementation now expects three SQLite files in the project root `backend/`:
+	- `stops.db`  (main stops & meta)
+	- `bus.db`    (bus timetables: `stop_times`, etc.)
+	- `rail.db`   (rail schedule tables such as `rail_schedule_stops` and `rail_departures`)
+- Location: `backend/app/domain/planner/planner.py` (class `JourneyPlanner`). The planner connects with `sqlite3` and performs `ATTACH DATABASE '/workspace/backend/bus.db' AS bus` when present.
+
+Running tests
+-------------
+- Recommended: create a virtualenv in `/workspace/backend` and install requirements then `pytest`:
+
+```bash
+cd backend
+python3 -m venv .venv
+source .venv/bin/activate
+python3 -m pip install --upgrade pip setuptools wheel
+pip install -r /workspace/requirements.txt
+pip install pytest
+python3 -m pytest backend/tests -q
+```
+
+- If you cannot install `pytest`, use the lightweight runner:
+
+```bash
+python3 backend/run_reliability_tests_runner.py
+```
+
+Local verification
+------------------
+- In this workspace I verified the backend test files (`backend/tests/test_reliability.py` and `backend/tests/test_weather_penalty.py`) — the test run completed successfully (13 tests passed) in the dev container after creating a venv and installing test deps.
+
 **Weather integration (summary)**
 - A planned improvement is a `fetch_weather(lat, lon)` helper that calls Open-Meteo and returns a small `WeatherInfo`. If `is_adverse` is true a -10 penalty should be applied to journey scores and an explanatory message appended to `reliability_explanations`. Keep weather sourcing separate from scoring logic.
 
