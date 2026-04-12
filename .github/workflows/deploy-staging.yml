@@ -1,0 +1,96 @@
+# Create a deploy workflow
+name: Deploy to Staging
+
+on:
+  push:
+  #  branches: [ main ] # Trigger on pushes to main branch
+
+permissions:
+  # contents: read 
+  # packages: write 
+
+jobs:
+  build-and-push:
+    name: Build and push Docker images
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU (optional for multi-arch)
+        uses: docker/setup-qemu-action@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+        # password: ${{ secrets.GHCR_TOKEN }} 
+
+      - name: Build and push backend image (staging)
+        uses: docker/build-push-action@v4
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}/backend:staging
+            ghcr.io/${{ github.repository }}/backend:${{ github.sha }}
+
+      - name: Build and push frontend image (staging)
+        uses: docker/build-push-action@v4
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}/frontend:staging
+            ghcr.io/${{ github.repository }}/frontend:${{ github.sha }}
+
+  deploy-staging:
+    name: Deploy to staging via SSH
+    runs-on: ubuntu-latest
+    needs: build-and-push
+
+    steps:
+      - name: Deploy to Staging Server via SSH
+        uses: appleboy/ssh-action@v0.1.9
+        with:
+          host: ${{ secrets.STAGING_SSH_HOST }}
+          username: ${{ secrets.STAGING_SSH_USER }}
+          key: ${{ secrets.STAGING_SSH_KEY }}
+          port: ${{ secrets.STAGING_SSH_PORT || 22 }}
+          script: |
+            set -euo pipefail 
+            cd /path/to/your/app || exit 1
+
+            # Pull latest images (the compose on server should reference :staging tags)
+            docker compose pull
+
+            # Restart services using compose
+            docker compose up -d --remove-orphans
+
+            # Wait for health endpoint with retries
+            echo "Waiting for application health..."
+            retries=12
+            count=0
+            until [ $count -ge $retries ]
+            do
+              STATUS_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/health || echo "000")
+              echo "Attempt $((count+1)): status=$STATUS_CODE"
+              if [ "$STATUS_CODE" = "200" ]; then
+                echo "Health check OK"
+                exit 0
+              fi
+              count=$((count+1))
+              sleep 5
+            done
+
+            echo "Health check failed after ${retries} attempts. Dumping logs..."
+            docker compose logs --no-color --tail=200
+            exit 1

@@ -1,0 +1,50 @@
+# Frontend CI workflow
+name: Frontend CI
+
+on:
+  push:
+    branches: [ main ] # Trigger on pushes to main branch
+  pull_request:
+    branches: [ main ] # Trigger on pull requests to main branch
+
+jobs:
+  frontend-ci:
+    runs-on: ubuntu-latest # Run on Ubuntu environment
+    defaults:
+      run:
+        working-directory: frontend # Set default working directory to frontend
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Set up Node.js environment
+      uses: actions/setup-node@v3
+      with:
+        node-version: '22' # Specify Node.js version
+        cache: 'npm' # Enable caching for npm dependencies
+        cache-dependency-path: frontend/package-lock.json
+
+    - name: Install Frontend Dependencies (npm ci)
+      run: npm ci
+  
+    - name: Run linter (npm run lint)
+      run: npm run lint
+      continue-on-error: false  
+      #Ensures workflow fails if linting fails
+
+    # Run the build process using npm run build
+    - name: Build Frontend (npm run build)
+      run: npm run build
+      continue-on-error: false
+    
+#    - name: Run Unit Tests (npm test)
+#      run: npm test
+#      continue-on-error: false
+      # Ensures workflow fails if tests fail
+
+  #  - name: Upload Frontend Test Reports and Coverage Artifacts
+  #    uses: actions/upload-artifact@v3
+  #    with:
+  #      name: frontend-test-reports
+  #      path: ./frontend/test-reports/
