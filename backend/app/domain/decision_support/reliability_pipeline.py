@@ -157,6 +157,6 @@ def compute_reliability(journey: dict):
     # 6) Attach to journey
     journey["reliability_score"] = score
     journey["reliability_band"] = band
-    journey["reliability_explanation"] = [e.text for e in explanations]
+    journey["reliability_explanations"] = [e.text for e in explanations]
 
     return journey, flags

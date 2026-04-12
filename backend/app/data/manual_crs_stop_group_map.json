@@ -1,0 +1,18 @@
+{
+    "_comment": "Manual CRS-to-stop_group mapping for the Lancashire demo corridor. This file acts as a reliable fallback when the NaPTAN loader has not yet populated the crs_stop_group_map database table. Each key is a 3-letter National Rail CRS code (uppercase). Values: stop_group_id = NPTG locality code, representative_stop_id = the RAIL:{CRS} stop row used by the planner, station_name = human-readable label for logging / debugging. To add a new station, copy one block and fill in the three fields.",
+    "LNS": {
+        "stop_group_id": "E0016403",
+        "representative_stop_id": "RAIL:LNS",
+        "station_name": "Lancaster"
+    },
+    "PRE": {
+        "stop_group_id": "E0016414",
+        "representative_stop_id": "RAIL:PRE",
+        "station_name": "Preston"
+    },
+    "BPN": {
+        "stop_group_id": "E0016415",
+        "representative_stop_id": "RAIL:BPN",
+        "station_name": "Blackpool North"
+    }
+}

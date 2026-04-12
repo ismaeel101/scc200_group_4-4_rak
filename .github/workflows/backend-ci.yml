@@ -1,0 +1,67 @@
+# Backend CI workflow
+name: Backend CI
+
+on: 
+  push: 
+    branches: [ main ] # Trigger on pushes to main branch
+  pull_request:
+    branches: [ main ] # Trigger on pull requests to main branch
+
+jobs:
+  backend-ci:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+    - name: Checkout Repository 
+      uses: actions/checkout@v3
+
+    - name: Show workspace and repo contents
+      run: |
+        echo "GITHUB_WORKSPACE=${GITHUB_WORKSPACE}"
+        pwd
+        ls -la
+        ls -la ./backend || true
+
+    - name: Set up Python 3.11 Environment
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11' 
+
+    - name: Cache pip packages 
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
+    - name: Install Python Backend Dependencies 
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install ruff pytest pip-audit 
+
+    - name: Lint code with ruff 
+      run: ruff check .
+
+    - name: Show collected tests for debugging 
+      run: pytest --collect-only
+
+    - name: Run Unit Tests with pytest
+      run: pytest
+      continue-on-error: false  
+      # Ensure workflow fails if tests fail
+
+    - name: Security Audit with pip-audit
+      run: pip-audit
+      continue-on-error: false  
+    
+   # - name: Upload Backend Test Reports and Coverage Artifacts
+   #   uses: actions/upload-artifact@v3
+   #   with:
+   #     name: backend-test-reports
+   #     path: ./backend/test-reports/
