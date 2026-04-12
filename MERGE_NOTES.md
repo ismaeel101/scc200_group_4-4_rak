@@ -31,3 +31,8 @@ Next actions?
 - Apply the recommended refactor to `backend/app/api.py` and run the full test suite + integration checks.
 - Inspect `optiroute.db` and prepare a `stops` table export suitable for CI and local integration.
 - Continue local runtime monkeypatch testing to validate further scenarios.
+
+Additional verification performed in this branch
+----------------------------------------------
+- The DB-backed planner implementation (`backend/app/domain/planner/planner.py`) was updated from `origin/kamol-backend-updated` to provide tighter DB-backed timetable integration. It expects `stops.db`, `bus.db` and `rail.db` located at the project `backend/` root when running integration scenarios.
+- I created a virtualenv, installed requirements and `pytest`, and executed the backend tests `tests/test_reliability.py` and `tests/test_weather_penalty.py` in this dev container. All tests passed (13 tests) during local verification.
