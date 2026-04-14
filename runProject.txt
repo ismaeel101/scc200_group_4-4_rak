@@ -8,9 +8,9 @@ cd /workspace/frontend && npm run dev
 
 Due to GitHub file size limits, the database files are hosted on OneDrive:
 
-- bus.db: 
-- stops.db: 
-- rail.db: 
+- bus.db:
+- stops.db:
+- rail.db:
 
 Download these and place them in:
 backend/
@@ -39,3 +39,4 @@ cd /workspace/frontend && npm run dev
 ```
 
 Then open: http://127.0.0.1:5173
+Then run the backend as normal.  

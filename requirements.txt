@@ -1,0 +1,28 @@
+# FastAPI application requirements
+fastapi>=0.95.0
+uvicorn[standard]>=0.21.0
+
+# Database
+psycopg2-binary>=2.9.0
+sqlalchemy>=1.4
+alembic>=1.10 # For database migrations 
+
+# Redis client
+redis>=4.5
+
+# Environment/config
+python-dotenv>=1.0
+
+# Production server (optional - we use uvicorn in Dockerfile but keep gunicorn for alternatives)
+#gunicorn>=20.1.0
+
+# HTTP client for integration tests or outgoing requests
+httpx>=0.24.0
+
+# Scheduling
+APScheduler>=3.10
+
+# Validation
+pydantic>=1.10 # For data validation and settings management
+
+# (Add any app-specific libs below)

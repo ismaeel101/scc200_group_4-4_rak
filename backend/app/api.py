@@ -12,6 +12,8 @@ from app.data.stops import StopService
 from app.domain.planner.planner import JourneyPlanner
 from app.domain.decision_support.decision_support import DecisionSupport
 from app.cache.cache_service import CacheService
+from app.domain.reliability import calculate_reliability
+from app.domain.weather import fetch_weather, WeatherInfo
 
 from app.data.exceptions import DataUnavailableError, StaticDataMissingError
 from app.domain.planner.exceptions import PlannerError, NoRouteFoundError
@@ -161,6 +163,14 @@ class Journey(BaseModel):
     reliability_score: int = Field(..., ge=0, le=100)
     reliability_band: Literal["High", "Medium", "Low"]
     reliability_explanation: List[str]
+    depart_time:        datetime
+    arrive_time:        datetime
+    changes:            int
+    reliability_score:       int = Field(..., ge=0, le=100)
+    reliability_band:        Literal["High", "Medium", "Low"]
+    reliability:            Literal["High", "Medium", "Low"]
+    reliability_explanations: List[str]
+    has_connection_risk:     bool = False
     legs: List[Leg]
 
 
@@ -250,6 +260,42 @@ def _parse_journey(raw) -> dict:
         "reliability_band": getattr(raw, "reliability_band", "Low"),
         "reliability_explanation": getattr(raw, "reliability_explanation", []),
         "legs": [_parse_leg(leg) for leg in raw.legs],
+    """
+    Person E (Rak)    — base journey fields from JourneyPlanner.
+    Person F (Daniel) — adds reliability_score, reliability_band,
+                        reliability_explanation via DecisionSupport.
+    """
+    # canonical summary text used by the reliability calculator
+    tight_summary = "One or more legs have very tight connections (<5 minutes) — increased risk of missed transfers"
+
+    if isinstance(raw, dict):
+        # ensure older dict inputs get a consistent boolean field
+        out = dict(raw)
+        out.setdefault("has_connection_risk", out.get("has_tight_connection", False))
+        # Ensure explanations list exists
+        expls = list(out.get("reliability_explanations") or [])
+        if (out.get("has_connection_risk") or out.get("has_tight_connection")) and not any(tight_summary in e for e in expls):
+            expls.append(tight_summary)
+        out["reliability_explanations"] = expls
+        out.setdefault("reliability", out.get("reliability_band", "Low"))
+        return out
+
+    expls = list(getattr(raw, "reliability_explanations", []) or [])
+    has_risk = getattr(raw, "has_connection_risk", getattr(raw, "has_tight_connection", False))
+    if has_risk and not any(tight_summary in e for e in expls):
+        expls.append(tight_summary)
+
+    return {
+        "total_duration_min":      raw.total_duration_min,
+        "depart_time":             raw.depart_time,
+        "arrive_time":             raw.arrive_time,
+        "changes":                 raw.changes,
+        "reliability_score":       getattr(raw, "reliability_score",       0),
+        "reliability_band":        getattr(raw, "reliability_band",        "Low"),
+        "reliability":            getattr(raw, "reliability_band",        "Low"),
+        "reliability_explanations": expls,
+        "has_connection_risk":     has_risk,
+        "legs":                    [_parse_leg(leg) for leg in raw.legs],
     }
 
 
@@ -417,6 +463,44 @@ async def api_routable_stops():
 
 
 @app.get("/stops", response_model=List[StopResponse], tags=["Search"], dependencies=[Depends(rate_limiter)])
+@app.get(
+    "/api/weather",
+    tags=["System"],
+    dependencies=[Depends(rate_limiter)],
+)
+async def api_get_weather(
+    lat: float = Query(54.0466, description="Latitude"),
+    lon: float = Query(-2.8007, description="Longitude"),
+):
+    """Return current weather for the provided coordinates.
+
+    Uses `fetch_weather` from the domain layer. This endpoint must never
+    raise a 500 — any failure returns a safe fallback payload.
+    """
+    from dataclasses import asdict
+
+    try:
+        info = fetch_weather(lat, lon)
+        # Ensure a plain JSON-serialisable dict is returned
+        return asdict(info)
+    except Exception as e:
+        print(f"Weather endpoint error: {e}")
+        fallback = WeatherInfo(
+            available=False,
+            is_adverse=False,
+            description="Weather data unavailable",
+            temperature_c=0.0,
+            windspeed_kmh=0.0,
+        )
+        return asdict(fallback)
+
+
+@app.get(
+    "/stops",
+    response_model=List[StopResponse],
+    tags=["Search"],
+    dependencies=[Depends(rate_limiter)],
+)
 async def get_stops(
     query: str = Query(..., min_length=2),
     limit: int = Query(10, ge=1, le=50),
@@ -527,6 +611,38 @@ async def plan_journey(
         annotated_journeys = journeys
         flags = ["TIMETABLE_ONLY", "LIVE_MISSING", "HISTORICAL_MISSING"]
 
+    # Ensure every journey includes reliability fields. If DecisionSupport
+    # did not provide them, compute a default using historical defaults and
+    # available live_status fields.
+    for j in annotated_journeys:
+        # Prepare legs for reliability calculation: map any live_status.delay_minutes
+        # -> live_delay_minutes and live_status.disrupted_flag -> is_cancelled
+        legs_for_calc = []
+        for leg in j.get("legs", []):
+            l = dict(leg) if isinstance(leg, dict) else dict(leg.__dict__)
+            ls = l.get("live_status") or {}
+            if isinstance(ls, dict):
+                if "delay_minutes" in ls:
+                    l["live_delay_minutes"] = ls.get("delay_minutes", 0)
+                if "disrupted_flag" in ls:
+                    l["is_cancelled"] = bool(ls.get("disrupted_flag"))
+            legs_for_calc.append(l)
+
+        # If reliability fields missing or zero-ish, compute defaults
+        missing_score = not j.get("reliability_score") and j.get("reliability_score") != 0
+        missing_band = not j.get("reliability_band")
+        missing_expl = not j.get("reliability_explanations")
+        if missing_score or missing_band or missing_expl:
+            res = calculate_reliability(legs_for_calc)
+            j["reliability_score"] = int(res.score)
+            j["reliability_band"] = res.band
+            j["reliability"] = j["reliability_band"]
+            j["reliability_explanations"] = res.explanations
+
+    # Step 4: Sort with tie-breakers per README routing objective:
+    #   Primary:   earliest arrival (time) or reliability_score (reliability)
+    #   Secondary: fewer changes  (README: "tie-breaker: fewer changes")
+    #   Tertiary:  reliability / duration as final tie-breaker
     if sort_by == "time":
         annotated_journeys.sort(
             key=lambda j: (j["total_duration_min"], j["changes"], -j["reliability_score"])
@@ -537,3 +653,206 @@ async def plan_journey(
         )
 
     return JourneyResponse(journeys=annotated_journeys, data_quality_flags=flags)
+    # Apply weather penalty once (single fetch) — non-fatal and non-blocking.
+    # If fetch fails, do not modify journeys.
+    weather_fetch_succeeded = False
+    try:
+        weather = fetch_weather(lat=54.0466, lon=-2.8007)
+        weather_fetch_succeeded = True
+    except Exception as e:
+        print(f"Weather fetch failed (non-fatal): {e}")
+        # create a safe fallback with is_adverse False but mark fetch as failed
+        weather = WeatherInfo(
+            available=False,
+            is_adverse=False,
+            description="Weather data unavailable",
+            temperature_c=0.0,
+            windspeed_kmh=0.0,
+        )
+
+    # Only apply penalty when fetch succeeded and weather reports adverse conditions
+    if weather_fetch_succeeded and getattr(weather, "is_adverse", False):
+        penalty_expl = "Adverse weather conditions may increase delays"
+        for j in annotated_journeys:
+            # Ensure explanations list exists
+            expls = list(j.get("reliability_explanations") or [])
+
+            # Subtract penalty and clamp
+            orig_score = int(j.get("reliability_score", 0))
+            new_score = max(0, orig_score - 10)
+            j["reliability_score"] = new_score
+
+            # Recompute band
+            if new_score >= 80:
+                j["reliability_band"] = "High"
+            elif new_score >= 50:
+                j["reliability_band"] = "Medium"
+            else:
+                j["reliability_band"] = "Low"
+            j["reliability"] = j["reliability_band"]
+
+            # Append explanation if not already present
+            if penalty_expl not in expls:
+                expls.append(penalty_expl)
+            j["reliability_explanations"] = expls
+
+    return JourneyResponse(journeys=annotated_journeys, data_quality_flags=flags)
+
+
+# ==========================================
+# ASSUMPTIONS
+#
+# Source of truth: repo README fixed group assumptions.
+# Any change to these must be communicated to the relevant person
+# AND reflected in the _parse_* functions and DTOs above.
+#
+# ── Person D (Kamol) ── app/data/
+#
+#   File:    app/data/stops.py
+#   Class:   StopService
+#   Method:  search_stops(query: str, limit: int) -> list
+#   Returns: list of dicts OR ORM objects with attributes:
+#              id   : str   — AtcoCode for bus stops (NaPTAN canonical ID)
+#              name : str   — human-readable stop/station name
+#              type : str   — exactly "bus" or "rail", no other values
+#              lat  : float
+#              lon  : float
+#
+#   File:    app/data/exceptions.py
+#   Must define and raise:
+#     StaticDataMissingError  — NaPTAN/NPTG not loaded (DB empty)
+#     DataUnavailableError    — DB temporarily unreachable
+#   Any other exception propagates uncaught and crashes loudly — intentional.
+#
+# ── Person E (Rak) ── app/domain/planner/
+#
+#   File:    app/domain/planner/planner.py
+#   Class:   JourneyPlanner
+#   Method:  plan(
+#                origin_id: str,
+#                destination_id: str,
+#                time_type: str,       # "depart_at" or "arrive_by"
+#                time_iso: datetime,
+#                modes: str,           # "bus", "rail", or "mixed"
+#                max_options: int
+#            ) -> list
+#   Returns: list of dicts OR domain objects with attributes:
+#              total_duration_min : int
+#              depart_time        : datetime
+#              arrive_time        : datetime
+#              changes            : int
+#              legs               : iterable of leg dicts or leg objects
+#
+#   Each leg object must have these attributes (README leg-level format):
+#              from_loc          : str      — MUST be from_loc not from
+#                                            ('from' is a reserved keyword)
+#              to_loc            : str
+#              mode              : str      — exactly "walk", "bus", or "rail"
+#              depart            : datetime
+#              arrive            : datetime
+#              operator          : Optional[str]
+#              service_id        : Optional[str]
+#              live_status       : Optional — see LiveStatus fields below
+#              leg_risk_band     : Optional[str] — README: leg_risk_band
+#              risk_explanation  : Optional[list[str]]
+#
+#   README routing objective implemented here:
+#     Primary:   earliest arrival / shortest duration
+#     Tie-break: fewer changes, then more slack (slack output is advisory,
+#                planner outputs it, DecisionSupport annotates risk from it)
+#
+#   README walking transfer rule (Rak must implement in planner):
+#     Max distance: WALK_MAX_METERS (e.g. 800m)
+#     Walking time: distance_m / 1.4 m/s
+#     Distance:     straight-line Haversine (no external routing API)
+#     Scope:        transfers between StopGroups only, not whole journeys
+#
+#   File:    app/domain/planner/exceptions.py
+#   Must define and raise:
+#     NoRouteFoundError — valid stops, no timetabled route connects them.
+#                         API returns empty journey list, not 503.
+#     PlannerError      — any other planning failure.
+#   Any other exception propagates uncaught — intentional.
+#
+#   CRITICAL NAMING AGREEMENT WITH RAK:
+#     Leg field must be named from_loc (not from, origin, departure_stop).
+#     If named differently, _parse_leg raises AttributeError.
+#
+# ── Person F (Daniel) ── app/domain/decision_support/ and app/cache/
+#
+#   File:    app/domain/decision_support/decision_support.py
+#   Class:   DecisionSupport
+#   Method:  annotate(journeys: list[dict]) -> tuple[list, list[str]]
+#   Receives: Already-parsed list of journey dicts (plain dicts, not ORM).
+#   Returns:  tuple of (annotated_journeys, flags) where:
+#
+#     annotated_journeys: list of dicts or objects, each journey having:
+#       reliability_score       : int (0–100)
+#       reliability_band        : str — exactly "High", "Medium", or "Low"
+#       reliability_explanation : list[str]
+#     Each leg within journey also annotated with (README leg-level format):
+#       live_status   : dict/object with fields:
+#                         available      : bool
+#                         delay_minutes  : int   — README: delay_minutes
+#                         disrupted_flag : bool  — README: disrupted_flag
+#                         source         : str
+#       leg_risk_band : str — README: leg_risk_band ("High"/"Medium"/"Low")
+#
+#     flags: list[str], subset of:
+#       "TIMETABLE_ONLY", "LIVE_MISSING", "WEATHER_MISSING", "HISTORICAL_MISSING"
+#
+#   README reliability bands (must match exactly — used in sorting):
+#     High   >= 80
+#     Medium  50–79
+#     Low    <  50
+#
+#   README assumption 5 — non-blocking failure:
+#     Daniel must raise DecisionSupportError (not generic Exception) for
+#     recoverable failures. If raised, API returns journeys without
+#     reliability data rather than failing the whole request.
+#
+#   File:    app/domain/decision_support/exceptions.py
+#   Must define: DecisionSupportError
+#
+#   File:    app/cache/cache_service.py
+#   Class:   CacheService
+#   Method:  get_freshness() -> dict
+#   Returns: dict with exactly these keys (datetime values):
+#              timetable_updated_at : datetime
+#              live_updated_at      : datetime
+#              weather_updated_at   : datetime
+#
+#   File:    app/cache/exceptions.py
+#   Must define: CacheUnavailableError
+#
+# ── Person B (Ismaeel) ── frontend/
+#
+#   No code dependency, but a strict JSON contract dependency.
+#   The JSON field names Ismaeel's TypeScript interfaces must match:
+#
+#   StopResponse:    id, name, type, lat, lon
+#   JourneyResponse: journeys[], data_quality_flags[]
+#   Journey:         total_duration_min, depart_time, arrive_time, changes,
+#                    reliability_score, reliability_band,
+#                    reliability_explanation[], legs[]
+#   Leg:             "from", "to", mode, depart, arrive, operator,
+#                    service_id, live_status, leg_risk_band,
+#                    risk_explanation[]
+#                    NOTE: JSON uses "from"/"to" (via Pydantic alias),
+#                    not "from_loc"/"to_loc" — Ismaeel's TS type should
+#                    use "from" and "to".
+#   LiveStatus:      available, delay_minutes, disrupted_flag, source
+#                    NOTE: delay_minutes (not delay_min),
+#                          disrupted_flag (not cancelled) — per README.
+#
+# ── Network / Infrastructure (Person A / Molly) ──
+#
+#   Rate limiter reads X-Forwarded-For for the real client IP because
+#   university ISS VPN and web proxy sit in front of the app.
+#   If deployed without a proxy (direct Docker on lab machine),
+#   X-Forwarded-For is absent and fallback to request.client.host applies.
+#   If multiple proxy hops exist, X-Forwarded-For is comma-separated;
+#   code takes first entry (original client).
+#   For multi-worker deployments, rate limit state must move to Redis.
+#
+# ==========================================

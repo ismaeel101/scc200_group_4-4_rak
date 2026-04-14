@@ -1,0 +1,92 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:14
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_DB: ${POSTGRES_DB:-appdb}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-appdb} || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - appnet
+
+  redis:
+    image: redis:6-alpine
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - appnet
+
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    env_file:
+      - ../.env
+    depends_on:
+      - db
+      - redis
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-changeme}@db:5432/${POSTGRES_DB:-appdb}}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      PORT: ${BACKEND_PORT:-8000}
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"         # host:container
+    volumes:
+      - ../backend:/app                      # dev mount; remove for production images
+    healthcheck:
+      # Requires curl in the image; otherwise change to a TCP or custom check
+      test: ["CMD-SHELL", "curl -f http://localhost:${BACKEND_PORT:-8000}/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - appnet
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    env_file:
+      - ../.env
+    depends_on:
+      - backend
+    environment:
+      # In-container the frontend should call backend by service name
+      VITE_API_URL: ${VITE_API_URL:-http://backend:8000}
+    ports:
+      - "${FRONTEND_PORT:-3000}:80"          # map host 3000 -> container 80 (nginx default)
+    volumes:
+      - ../frontend:/usr/src/app             # dev mount; remove for production
+    healthcheck:
+      # nginx serves on 80 in your frontend image; adjust path if needed
+      test: ["CMD-SHELL", "curl -f http://localhost/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - appnet
+
+volumes:
+  db_data:
+
+networks:
+  appnet:
+    driver: bridge 
