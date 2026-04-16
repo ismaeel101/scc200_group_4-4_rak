@@ -131,6 +131,22 @@ class JourneyPlanner:
 
         return stop_id
 
+    def _get_line_name(self, conn, trip_id, _cache={}):
+        if trip_id in _cache:
+            return _cache[trip_id]
+        try:
+            r = conn.execute(
+                "SELECT s.line_name FROM bus.trips t JOIN bus.services s ON t.service_id=s.id WHERE t.id=? LIMIT 1",
+                (trip_id,)
+            ).fetchone()
+            if r and r[0]:
+                _cache[trip_id] = r[0]
+                return r[0]
+        except Exception:
+            pass
+        _cache[trip_id] = None
+        return None
+
     def _resolve_stop(self, conn, stop_id):
         try:
             r = conn.execute(
@@ -524,7 +540,7 @@ class JourneyPlanner:
             transfer_points.append(vehicle_legs[i].get("to"))
 
         return (
-            tuple(leg.get("mode") for leg in vehicle_legs),
+            tuple((leg.get("mode"), leg.get("line") or "") for leg in vehicle_legs),
             first_vehicle.get("from"),
             last_vehicle.get("to"),
             tuple(transfer_points),
@@ -909,7 +925,7 @@ class JourneyPlanner:
                             dest_name,
                             depart_dt,
                             arrive_dt,
-                            line=None,
+                            line=self._get_line_name(conn, trip),
                             from_lat=origin_lat,
                             from_lon=origin_lon,
                             to_lat=dest_lat,
@@ -946,7 +962,7 @@ class JourneyPlanner:
                             }
                         )
                         
-                        if exact_journeys:
+                        if len(exact_journeys) >= max_options:
                             selected = self._select_distinct_journeys(exact_journeys, max_options)
                             conn.close()
                             return selected
@@ -1134,7 +1150,7 @@ class JourneyPlanner:
                                             to_name,
                                             depart_dt,
                                             arrive_dt,
-                                            line=None,
+                                            line=self._get_line_name(conn, trip_id),
                                             from_lat=o_lat,
                                             from_lon=o_lon,
                                             to_lat=d_lat,
@@ -1469,7 +1485,7 @@ class JourneyPlanner:
                                         ds_name,
                                         depart_dt,
                                         arrive_dt,
-                                        line=None,
+                                        line=self._get_line_name(conn, row["trip_id"]),
                                         from_lat=cur_lat,
                                         from_lon=cur_lon,
                                         to_lat=ds_lat,
