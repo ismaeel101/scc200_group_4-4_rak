@@ -401,7 +401,7 @@ async def api_routable_stops():
     if rail_db_path:
         try:
             conn = sqlite3.connect(str(rail_db_path))
-            cur = conn.execute("SELECT DISTINCT tiploc FROM schedules")
+            cur = conn.execute("SELECT DISTINCT tiploc FROM schedules LIMIT 5000")
             rail_ids = [r[0] for r in cur.fetchall() if r and r[0]]
             routable_ids.update(rail_ids)
             routable_ids.update(f"RAIL:{r}" for r in rail_ids)
