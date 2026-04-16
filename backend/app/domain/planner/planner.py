@@ -709,28 +709,7 @@ class JourneyPlanner:
         except Exception:
             pass
 
-        for db_path, stmts in [
-            (self.BUS_DB, [
-                "CREATE INDEX IF NOT EXISTS idx_stop_times_stop_id ON stop_times(stop_id)",
-                "CREATE INDEX IF NOT EXISTS idx_stop_times_trip_id ON stop_times(trip_id)",
-                "CREATE INDEX IF NOT EXISTS idx_stop_times_trip_seq ON stop_times(trip_id, sequence)",
-                "CREATE INDEX IF NOT EXISTS idx_bus_stops_atco ON bus_stops(atco_code)",
-            ]),
-            (self.RAIL_DB, [
-                "CREATE INDEX IF NOT EXISTS idx_schedules_tiploc ON schedules(tiploc)",
-                "CREATE INDEX IF NOT EXISTS idx_schedules_uid_seq ON schedules(train_uid, seq)",
-                "CREATE INDEX IF NOT EXISTS idx_schedules_tiploc_dep ON schedules(tiploc, departure)",
-            ]),
-        ]:
-            if db_path.exists():
-                try:
-                    tmp = sqlite3.connect(str(db_path))
-                    for stmt in stmts:
-                        tmp.execute(stmt)
-                    tmp.commit()
-                    tmp.close()
-                except Exception:
-                    pass
+        # Indexes are pre-built - skip creation to avoid locking
 
         start_time = time.time()
 

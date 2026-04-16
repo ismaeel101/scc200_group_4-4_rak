@@ -381,9 +381,14 @@ async def api_get_stops(
         conn.close()
 
 
+_routable_stops_cache = None
+
 @app.get("/api/routable-stops", tags=["Search"], dependencies=[Depends(rate_limiter)])
 async def api_routable_stops():
     """Return distinct stop IDs from bus and rail timetables."""
+    global _routable_stops_cache
+    if _routable_stops_cache is not None:
+        return _routable_stops_cache
     bus_db_path = _find_db_path("bus.db", "database1.db")
     rail_db_path = _find_db_path("rail.db")
 
@@ -413,7 +418,8 @@ async def api_routable_stops():
     if not routable_ids:
         raise HTTPException(status_code=503, detail="No routable databases found")
 
-    return {"ids": list(routable_ids)}
+    _routable_stops_cache = {"ids": list(routable_ids)}
+    return _routable_stops_cache
 
 
 @app.get("/stops", response_model=List[StopResponse], tags=["Search"], dependencies=[Depends(rate_limiter)])
