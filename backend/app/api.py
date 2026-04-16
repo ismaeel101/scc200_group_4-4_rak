@@ -148,6 +148,7 @@ class Leg(BaseModel):
     to_lon: Optional[float] = None
     operator: Optional[str] = None
     service_id: Optional[str] = None
+    line: Optional[str] = None
     live_status: Optional[LiveStatus] = None
     leg_risk_band: Optional[Literal["High", "Medium", "Low"]] = None
     risk_explanation: Optional[List[str]] = None
