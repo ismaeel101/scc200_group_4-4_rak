@@ -678,6 +678,9 @@ class JourneyPlanner:
             return self._plan_with_provider(origin_id)
 
         requested_dt = self._parse_iso(time_iso)
+        if requested_dt is not None and requested_dt.tzinfo is not None:
+            import datetime
+            requested_dt = requested_dt.replace(tzinfo=None)
         if requested_dt is None:
             requested_dt = datetime.now()
 
