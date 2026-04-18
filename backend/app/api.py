@@ -12,6 +12,7 @@ from app.data.stops import StopService
 from app.domain.planner.planner import JourneyPlanner
 from app.domain.decision_support.decision_support import DecisionSupport
 from app.cache.cache_service import CacheService
+from app.domain.weather import fetch_weather
 
 from app.data.exceptions import DataUnavailableError, StaticDataMissingError
 from app.domain.planner.exceptions import PlannerError, NoRouteFoundError
@@ -311,6 +312,18 @@ async def system_status(cache_service: CacheService = Depends(get_cache_service)
         return StatusResponse(**freshness)
     except CacheUnavailableError:
         raise HTTPException(status_code=503, detail="Cache unavailable")
+
+
+@app.get("/api/weather", tags=["System"], dependencies=[Depends(rate_limiter)])
+async def api_get_weather(
+    lat: float = Query(..., description="Latitude"),
+    lon: float = Query(..., description="Longitude"),
+):
+    """
+    Return a lightweight weather summary for the given coordinates.
+    """
+    result = await fetch_weather(lat, lon)
+    return result
 
 
 @app.get("/api/stops", tags=["Search"], dependencies=[Depends(rate_limiter)])

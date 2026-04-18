@@ -6,6 +6,7 @@ import WeatherWidget from "../components/WeatherWidget"; // Added import for W7
 import "./SearchPage.css";
 import translations from '../translations';
 import { useUi } from '../contexts/UiContext';
+import WeatherWidget from '../components/WeatherWidget';
 
 const SearchPage: React.FC = () => {
   const navigate = useNavigate();
@@ -51,6 +52,7 @@ const SearchPage: React.FC = () => {
             </div>
 
             <div className="searchpage__card">
+              <WeatherWidget />
               <SearchForm
                 isLoading={loading}
                 onModeChange={setMapMode}

@@ -1676,30 +1676,9 @@ class JourneyPlanner:
                 later.sort(key=self._journey_sort_key)
                 return self._select_distinct_journeys(later, max_options)
 
-            earlier = [
-                jj for jj in good
-                if self._parse_iso(jj.get("depart_time"))
-                and self._parse_iso(jj.get("depart_time")) < requested_dt
-            ]
-            earlier.sort(
-                key=lambda j: (
-                    -((self._parse_iso(j.get("depart_time")).timestamp())
-                      if self._parse_iso(j.get("depart_time")) else 0),
-                    j.get("changes", 999999),
-                    tuple(
-                        (
-                            leg.get("mode", ""),
-                            leg.get("from", ""),
-                            leg.get("to", ""),
-                            leg.get("depart", ""),
-                            leg.get("arrive", ""),
-                            leg.get("line", ""),
-                        )
-                        for leg in j.get("legs", [])
-                    ),
-                )
+            raise NoRouteFoundError(
+                f"No upcoming departures found from {origin_id} after {requested_dt.isoformat()}"
             )
-            return self._select_distinct_journeys(earlier, max_options)
 
         good.sort(key=self._journey_sort_key)
         return self._select_distinct_journeys(good, max_options)

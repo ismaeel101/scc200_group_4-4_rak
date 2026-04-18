@@ -1,59 +1,94 @@
-import React, { useState, useEffect } from 'react';
-const BACKEND_PORT = '8000'; 
-const WEATHER_API = `http://localhost:${BACKEND_PORT}/api/weather`;
+import React, { useEffect, useState } from "react";
 
-interface WeatherData {
-  temperature_c: number;
-  windspeed_kmh: number;
-  description: string;
-  is_adverse: boolean;
-  available: boolean;
-}
+type WeatherDto = {
+    available: boolean;
+    is_adverse: boolean;
+    description: string;
+    temperature_c: number | null;
+    windspeed_kmh: number | null;
+};
 
 const WeatherWidget: React.FC = () => {
-  const [weather, setWeather] = useState<WeatherData | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
+    const [loading, setLoading] = useState<boolean>(true);
+    const [weather, setWeather] = useState<WeatherDto | null>(null);
 
-  useEffect(() => {
-    fetch(WEATHER_API)
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.available) setWeather(data);
-        setLoading(false);
-      })
-      .catch(() => {
-        // Silent failure as per Task W5/W8 [cite: 68, 109]
-        setLoading(false);
-      });
-  }, []);
+    useEffect(() => {
+        let mounted = true;
+        fetch("http://localhost:8000/api/weather?lat=54.047&lon=-2.801")
+            .then((res) => {
+                if (!res.ok) throw new Error("Network response was not ok");
+                return res.json();
+            })
+            .then((data: WeatherDto) => {
+                if (mounted) setWeather(data);
+            })
+            .catch(() => {
+                if (mounted)
+                    setWeather({
+                        available: false,
+                        is_adverse: false,
+                        description: "",
+                        temperature_c: null,
+                        windspeed_kmh: null,
+                    });
+            })
+            .finally(() => {
+                if (mounted) setLoading(false);
+            });
+        return () => {
+            mounted = false;
+        };
+    }, []);
 
-  if (loading) return <div className="text-xs animate-pulse">Loading weather...</div>;
-  if (!weather || !weather.available) return null; 
+    if (loading) {
+        return <div style={{ fontFamily: "sans-serif", fontSize: 14 }}>Loading...</div>;
+    }
 
-  return (
-    <div className="flex flex-col mb-4">
-      {/* Adverse Weather Banner (Task W6) [cite: 75, 77] */}
-      {weather.is_adverse && (
-        <div className="bg-amber-100 border-l-4 border-amber-500 text-amber-800 p-2 mb-2 text-sm font-medium">
-          ⚠️ Adverse weather in this region may affect journey reliability
+    if (!weather || !weather.available) {
+        return null;
+    }
+
+    const icon = weather.is_adverse ? "☁️" : "☀️";
+
+    return (
+        <div
+            style={{
+                fontFamily: "sans-serif",
+                border: "1px solid #e6e6e6",
+                padding: 12,
+                borderRadius: 6,
+                display: "inline-block",
+                minWidth: 220,
+            }}
+        >
+            {weather.is_adverse && (
+                <div
+                    style={{
+                        background: "#fff3cd",
+                        color: "#856404",
+                        padding: "8px 10px",
+                        borderRadius: 4,
+                        marginBottom: 8,
+                        fontSize: 13,
+                    }}
+                >
+                    ⚠️ Adverse weather may affect reliability scores
+                </div>
+            )}
+
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <div style={{ fontSize: 32, lineHeight: 1 }}>{icon}</div>
+
+                <div>
+                    <div style={{ fontWeight: 600, fontSize: 15 }}>{weather.description || "Unknown"}</div>
+                    <div style={{ fontSize: 13, color: "#333", marginTop: 6 }}>
+                        Temp: {weather.temperature_c !== null ? `${weather.temperature_c}°C` : "N/A"} • Wind:{" "}
+                        {weather.windspeed_kmh !== null ? `${weather.windspeed_kmh} km/h` : "N/A"}
+                    </div>
+                </div>
+            </div>
         </div>
-      )}
-
-      {/* Main Widget Styled with Navy/Teal [cite: 67, 72] */}
-      <div className="bg-[#1E3A5F] text-white p-3 rounded-lg flex justify-between items-center shadow-sm">
-        <div>
-          <p className="text-xs uppercase opacity-80">Current Weather</p>
-          <p className="font-bold text-lg">{weather.temperature_c}°C</p>
-        </div>
-        <div className="text-right">
-          <p className="text-sm font-medium text-[#0D6E8A] bg-white px-2 py-0.5 rounded-full inline-block">
-            {weather.description}
-          </p>
-          <p className="text-xs mt-1">Wind: {weather.windspeed_kmh} km/h</p>
-        </div>
-      </div>
-    </div>
-  );
+    );
 };
 
 export default WeatherWidget;
