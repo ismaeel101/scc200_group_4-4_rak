@@ -10,40 +10,18 @@ __pycache__/
 # env
 .env
 
-# large raw data (DON’T upload)
-/data/
+# large raw data (DON'T upload)
 *.xml
 *.gz
 *.zip
+
+# databases
+*.db
 
 # temp
 /tmp/
 
 # OS
-.DS_Store
-
-.gitkeep
-/backend/*.db
-.venv
-
-
-# Backend DB artifacts
-backend/*.db-wal
-backend/*.db-shm
-backend/*.db
-
-!backend/app/data/*.db
-
-# Virtual environments
-backend/.venv
-.venv
-
-# Logs
-*.log
-
-# Environment files
-.env
-
-# Frontend build and dependencies
-frontend/dist/
-frontend/node_modules/
+.DS_Store*.db
+*.db-shm
+*.db-wal

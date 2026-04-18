@@ -117,6 +117,16 @@ def ensure_tables(conn: sqlite3.Connection):
         )
         """
     )
+    # Store stop metadata extracted from TransXChange StopPoint elements.
+    # This provides a fallback name lookup when stops.db is incomplete.
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS stop_points (
+            atco_code TEXT PRIMARY KEY,
+            common_name TEXT
+        )
+        """
+    )
     conn.commit()
     print("Tables created successfully")
 
@@ -134,6 +144,18 @@ def process_file(path: str, conn: sqlite3.Connection, stop_times_counter: List[i
     cur = conn.cursor()
 
     try:
+        # Extract StopPoint metadata (AtcoCode -> CommonName) from this file.
+        # TransXChange files embed stop definitions that serve as a fallback
+        # when stops.db is incomplete.
+        for sp in root.findall('.//tx:StopPoint', ns):
+            atco_el = sp.find('tx:AtcoCode', ns)
+            cname_el = sp.find('tx:CommonName', ns)
+            if atco_el is not None and atco_el.text and cname_el is not None and cname_el.text:
+                cur.execute(
+                    "INSERT OR IGNORE INTO stop_points (atco_code, common_name) VALUES (?, ?)",
+                    (atco_el.text.strip(), cname_el.text.strip()),
+                )
+
         # collect services
         for svc in root.findall('.//tx:Service', ns):
             sc = svc.find('tx:ServiceCode', ns)
@@ -285,6 +307,14 @@ def main():
         arrival_time TEXT,
         departure_time TEXT,
         sequence INTEGER
+    );
+    CREATE TABLE IF NOT EXISTS stop_points (
+        atco_code TEXT PRIMARY KEY,
+        common_name TEXT
+    );
+    CREATE TABLE IF NOT EXISTS stop_points (
+        atco_code TEXT PRIMARY KEY,
+        common_name TEXT
     );
     '''
     # Set pragmas and attempt to create tables with retries to avoid transient locks

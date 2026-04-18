@@ -28,7 +28,7 @@ const LiveStopLayer: React.FC = () => {
                         const stop = { id, name };
                         console.log('Selected stop:', stop);
                         console.log('Using ATCO:', id);
-                        if (!id || !(/^\d+$/.test(String(id)))) {
+                        if (!id || id.trim().length === 0) {
                             console.warn('Invalid stop ID, ignoring:', stop);
                             return;
                         }
@@ -47,7 +47,7 @@ const LiveStopLayer: React.FC = () => {
                         const stop = { id, name };
                         console.log('Selected stop:', stop);
                         console.log('Using ATCO:', id);
-                        if (!id || !(/^\d+$/.test(String(id)))) {
+                        if (!id || id.trim().length === 0) {
                             console.warn('Invalid stop ID, ignoring:', stop);
                             return;
                         }
