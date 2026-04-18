@@ -5,6 +5,7 @@ import HomeMap from "../components/HomeMap";
 import "./SearchPage.css";
 import translations from '../translations';
 import { useUi } from '../contexts/UiContext';
+import WeatherWidget from '../components/WeatherWidget';
 
 const SearchPage: React.FC = () => {
   const navigate = useNavigate();
@@ -44,6 +45,7 @@ const SearchPage: React.FC = () => {
           <div className="searchpage__panel-inner">
             <h2 className="searchpage__panel-title">{planLabel}</h2>
             <div className="searchpage__card">
+              <WeatherWidget />
               <SearchForm
                 isLoading={loading}
                 onSelectFrom={(s) => {

@@ -6,6 +6,7 @@ import { useUi } from '../contexts/UiContext';
 import { Train, Bus, Clock, ArrowRight } from "lucide-react";
 import { Journey } from '../types/journey';
 import { formatTime } from '../utils/formatTime';
+import WeatherWidget from '../components/WeatherWidget';
 
 const ResultsPage: React.FC = () => {
   const { language } = useUi();
@@ -114,6 +115,7 @@ const ResultsPage: React.FC = () => {
           </aside>
 
           <main className="resultspage__right">
+            <WeatherWidget />
             <section className="card map-card">
               <h3 className="card__title">{routeMapLabel}</h3>
               <div className="map-placeholder" role="region" aria-label={routeMapLabel}>
@@ -189,6 +191,18 @@ const ResultsPage: React.FC = () => {
                     <div className="reliability-body">{
                       (((selectedJourney as any)?.reliability_band || (selectedJourney as any)?.reliability) === 'High') ? reliabilityHighMsg : (((selectedJourney as any)?.reliability_band || (selectedJourney as any)?.reliability) === 'Medium') ? reliabilityMediumMsg : reliabilityLowMsg
                     }</div>
+
+                    <div style={{ fontSize: 12, color: '#6b7280', marginTop: 8 }}>
+                      Score: {(selectedJourney as any)?.reliability_score ?? 0}/100
+                    </div>
+
+                    {((selectedJourney as any)?.reliability_explanation && (selectedJourney as any).reliability_explanation.length) ? (
+                      <ul style={{ marginTop: 6, paddingLeft: 18 }}>
+                        {((selectedJourney as any).reliability_explanation || []).map((ex: string, i: number) => (
+                          <li key={i} style={{ fontSize: 12, color: '#6b7280', marginBottom: 4 }}>{ex}</li>
+                        ))}
+                      </ul>
+                    ) : null}
                   </div>
                 </section>
               </>
