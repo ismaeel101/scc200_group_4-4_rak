@@ -41,10 +41,4 @@ export interface Journey {
     totalDurationMinutes: number;
     reliability: 'High' | 'Medium' | 'Low';
     legs: Leg[];
-
-    // New optional reliability & weather fields
-    reliability_band?: 'High' | 'Medium' | 'Low';
-    reliability_score?: number;
-    reliability_explanation?: string[];
-    weather_penalty_applied?: boolean;
 }
