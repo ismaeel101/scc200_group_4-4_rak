@@ -304,7 +304,7 @@ class JourneyPlanner:
             "to_lon": to_lon,
         }
 
-    def _vehicle_leg_dict(self, mode, from_name, to_name, depart_dt, arrive_dt, line=None, from_lat=None, from_lon=None, to_lat=None, to_lon=None):
+    def _vehicle_leg_dict(self, mode, from_name, to_name, depart_dt, arrive_dt, line=None, from_lat=None, from_lon=None, to_lat=None, to_lon=None, service_id=None, from_seq=None, to_seq=None):
         return {
             "mode": mode,
             "line": line or "",
@@ -316,6 +316,9 @@ class JourneyPlanner:
             "from_lon": from_lon,
             "to_lat": to_lat,
             "to_lon": to_lon,
+            "service_id": service_id,
+            "from_seq": from_seq,
+            "to_seq": to_seq,
         }
 
     def _get_rail_candidates_from_stop(
@@ -485,6 +488,8 @@ class JourneyPlanner:
                         "depart_dt": depart_dt,
                         "arrive_dt": arrive_dt,
                         "trip_id": row["train_uid"],
+                        "from_seq": row["seq"],
+                        "to_seq": ds["seq"],
                         "to_lat": ds_lat,
                         "to_lon": ds_lon,
                     }
@@ -930,6 +935,9 @@ class JourneyPlanner:
                             from_lon=origin_lon,
                             to_lat=dest_lat,
                             to_lon=dest_lon,
+                            service_id=trip,
+                            from_seq=o_seq,
+                            to_seq=dest_seq,
                         )
                         total_duration = int((arrive_dt - depart_dt).total_seconds() / 60)
                         if total_duration <= 0 and (dest_seq - o_seq) > 0:
@@ -945,6 +953,9 @@ class JourneyPlanner:
                                 from_lon=origin_lon,
                                 to_lat=dest_lat,
                                 to_lon=dest_lon,
+                                service_id=trip,
+                                from_seq=o_seq,
+                                to_seq=dest_seq,
                             )
                             total_duration = 1
 
@@ -1005,6 +1016,9 @@ class JourneyPlanner:
                                 from_lon=origin_lon,
                                 to_lat=rc.get("to_lat"),
                                 to_lon=rc.get("to_lon"),
+                                service_id=rc.get("trip_id"),
+                                from_seq=rc.get("from_seq"),
+                                to_seq=rc.get("to_seq"),
                             )
                             score, band, explanation = self._compute_reliability([vehicle], total_duration, conn)
                             rail_direct.append(
@@ -1155,6 +1169,9 @@ class JourneyPlanner:
                                             from_lon=o_lon,
                                             to_lat=d_lat,
                                             to_lon=d_lon,
+                                            service_id=trip_id,
+                                            from_seq=o_seq,
+                                            to_seq=dr["sequence"],
                                         )
                                     )
 
@@ -1490,6 +1507,9 @@ class JourneyPlanner:
                                         from_lon=cur_lon,
                                         to_lat=ds_lat,
                                         to_lon=ds_lon,
+                                        service_id=row["trip_id"],
+                                        from_seq=row["sequence"],
+                                        to_seq=ds["sequence"],
                                     )
                                     legs_new = cur_legs + [leg]
                                     new_vehicle_legs = vehicle_legs + 1
@@ -1555,6 +1575,9 @@ class JourneyPlanner:
                                     from_lon=cur_lon,
                                     to_lat=ds_lat,
                                     to_lon=ds_lon,
+                                    service_id=rc.get("trip_id"),
+                                    from_seq=rc.get("from_seq"),
+                                    to_seq=rc.get("to_seq"),
                                 )
                                 legs_new = cur_legs + [leg]
                                 new_vehicle_legs = vehicle_legs + 1
