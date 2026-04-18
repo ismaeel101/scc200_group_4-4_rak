@@ -111,3 +111,24 @@ div {
     margin-top: 6px;
     font-size: 0.9rem;
 }
+
+/* Remove Leaflet default white popup wrapper for custom stop popup card */
+.leaflet-popup.stop-popup-clean .leaflet-popup-content-wrapper {
+    background: transparent !important;
+    box-shadow: none !important;
+    border: none !important;
+    padding: 0 !important;
+}
+
+.leaflet-popup.stop-popup-clean .leaflet-popup-content {
+    margin: 0 !important;
+}
+
+.leaflet-popup.stop-popup-clean .leaflet-popup-tip-container,
+.leaflet-popup.stop-popup-clean .leaflet-popup-tip {
+    display: none !important;
+}
+
+.leaflet-popup.stop-popup-clean .leaflet-popup-close-button {
+    display: none !important;
+}

@@ -1,42 +1,132 @@
 import React, { useState, useEffect, useRef } from "react";
 import translations from '../translations';
-import { searchStops } from '../utils/searchStops';
 import { Stop } from '../types/stop';
 import { useUi } from '../contexts/UiContext';
-import { MapPin, Clock, Bus, Train, Shuffle } from "lucide-react";
+import { MapPin, Bus, Train, Shuffle, Search } from "lucide-react";
 
 type SearchFormProps = {
-  onSearch?: (data: { from: string; to: string; date: string; time: string; mode: string }) => void;
+  onSearch?: (data: {
+    from: string;
+    to: string;
+    date: string;
+    time: string;
+    mode: string;
+    time_type: 'depart_at' | 'arrive_by';
+    time_iso: string;
+  }) => void;
   isLoading?: boolean;
   onSelectFrom?: (stop: Stop) => void;
+  onModeChange?: (mode: 'all' | 'bus' | 'rail') => void;
 };
 
 function capitalizeWords(s: string) {
   return s.replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+function escapeRegExp(text: string) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function isSubsequence(query: string, target: string) {
+  let qi = 0;
+  let ti = 0;
+  while (qi < query.length && ti < target.length) {
+    if (query[qi] === target[ti]) qi += 1;
+    ti += 1;
+  }
+  return qi === query.length;
+}
+
+function scoreMatch(query: string, text: string) {
+  const q = query.toLowerCase().trim();
+  const t = text.toLowerCase().trim();
+  if (!q || !t) return 0;
+  if (t.startsWith(q)) return 300 - t.length;
+  if (t.includes(q)) return 200 - t.indexOf(q);
+  if (isSubsequence(q, t)) return 100;
+  return -1;
+}
+
+function getUkNowParts(base: Date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(base);
+
+  const pick = (type: string) => parts.find((p) => p.type === type)?.value || '';
+
+  return {
+    year: pick('year'),
+    month: pick('month'),
+    day: pick('day'),
+    hour: pick('hour'),
+    minute: pick('minute'),
+    second: pick('second') || '00',
+  };
+}
+
+function buildIsoLocal(year: string, month: string, day: string, hour: string, minute: string, second = '00') {
+  return `${year}-${month}-${day}T${hour}:${minute}:${second}`;
+}
+
+function getUkTomorrowDateString() {
+  const ukNow = getUkNowParts();
+  const y = Number(ukNow.year);
+  const m = Number(ukNow.month);
+  const d = Number(ukNow.day);
+  const utc = new Date(Date.UTC(y, m - 1, d) + 24 * 60 * 60 * 1000);
+  const yyyy = String(utc.getUTCFullYear()).padStart(4, '0');
+  const mm = String(utc.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(utc.getUTCDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
 const SUGGESTED_CITIES = [
   'Manchester', 'Salford', 'Bolton', 'Bury', 'Oldham', 'Rochdale', 'Stockport', 'Tameside', 'Trafford', 'Wigan', 'Liverpool', 'Birkenhead', 'St Helens', 'Southport', 'Widnes', 'Runcorn', 'Preston', 'Lancaster', 'Blackburn', 'Burnley', 'Blackpool', 'Chorley', 'Morecambe', 'Accrington', 'Lytham St Annes', 'Skelmersdale', 'Carlisle', 'Kendal', 'Barrow-in-Furness', 'Workington', 'Whitehaven', 'Penrith'
 ];
 
-const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false }) => {
+const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false, onSelectFrom, onModeChange }) => {
   const ui = useUi();
-  const { language, setSelectedOrigin, setSelectedDestination, validStopIds } = ui;
+  const {
+    language,
+    setSelectedOrigin,
+    setSelectedDestination,
+    selectedOriginId,
+    selectedDestinationId,
+    validStopIds,
+    availableStops,
+  } = ui;
   const t = translations[language.code] || translations.en;
   const [from, setFrom] = useState('');
   const [fromSuggestions, setFromSuggestions] = useState<Stop[]>([]);
   const [to, setTo] = useState('');
+  const [toSuggestions, setToSuggestions] = useState<Stop[]>([]);
+  const [openDropdown, setOpenDropdown] = useState<'from' | 'to' | null>(null);
+  const [activeFromIndex, setActiveFromIndex] = useState(-1);
+  const [activeToIndex, setActiveToIndex] = useState(-1);
   const [journeys, setJourneys] = useState<any[] | null>(null);
   const [selectedDate, setSelectedDate] = useState('');
   const [selectedTime, setSelectedTime] = useState('');
+  const [dateTouched, setDateTouched] = useState(false);
+  const [timeTouched, setTimeTouched] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [selectedMode, setSelectedMode] = useState('All modes');
   const [journeyType, setJourneyType] = useState('All');
   const [rotating, setRotating] = useState(false);
   const [isDepart, setIsDepart] = useState(true);
+  const formRef = useRef<HTMLFormElement | null>(null);
 
-  const dateRef = useRef<HTMLInputElement | null>(null);
-  const timeRef = useRef<HTMLInputElement | null>(null);
+  useEffect(() => {
+    const modeLower = selectedMode.toLowerCase();
+    const mapMode: 'all' | 'bus' | 'rail' = modeLower === 'bus' ? 'bus' : modeLower === 'rail' ? 'rail' : 'all';
+    if (onModeChange) onModeChange(mapMode);
+  }, [selectedMode, onModeChange]);
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -83,31 +173,25 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false }) 
       selectedDestinationName: ui.selectedDestinationName,
     });
 
-    try {
-      if (!origin_id && from && from.length > 1) {
-        const r = await searchStops(from, 5);
-        if (r && r.length > 0) {
-          const valid = validStopIds || new Set<string>();
-          const pick = r.find((x: any) => valid.has(x.id));
-          if (pick) origin_id = pick.id;
-        }
-      }
-      if (!destination_id && to && to.length > 1) {
-        const r = await searchStops(to, 5);
-        if (r && r.length > 0) {
-          const valid = validStopIds || new Set<string>();
-          const pick = r.find((x: any) => valid.has(x.id));
-          if (pick) destination_id = pick.id;
-        }
-      }
-    } catch (e) {
-      // ignore lookup failures
+    const valid = validStopIds || new Set<string>();
+    const localStops = Array.isArray(availableStops) ? availableStops : [];
+
+    if (!origin_id && from && from.length > 1) {
+      const exact = localStops.find((s) => valid.has(s.id) && s.name.toLowerCase() === from.trim().toLowerCase());
+      if (exact) origin_id = exact.id;
+    }
+    if (!destination_id && to && to.length > 1) {
+      const exact = localStops.find((s) => valid.has(s.id) && s.name.toLowerCase() === to.trim().toLowerCase());
+      if (exact) destination_id = exact.id;
     }
 
-    // Build ISO datetime from selected date + time (local)
+    // Build ISO datetime
+    // Case 1: user did not touch date/time -> use now
+    // Case 2: user set date/time -> combine selected date + time
+    const untouchedDateTime = !dateTouched && !timeTouched;
+    let time_iso = '';
     const dtParts = selectedDate.split('-');
     const timeParts = selectedTime.split(':');
-    let time_iso = new Date().toISOString();
     try {
       if (dtParts.length === 3 && timeParts.length >= 2) {
         const y = Number(dtParts[0]);
@@ -115,12 +199,20 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false }) 
         const d = Number(dtParts[2]);
         const hh = Number(timeParts[0]);
         const mm = Number(timeParts[1]);
-        const composed = new Date(y, m, d, hh, mm, 0);
-        time_iso = composed.toISOString();
+        const yyyy = String(y).padStart(4, '0');
+        const month = String(m + 1).padStart(2, '0');
+        const day = String(d).padStart(2, '0');
+        const hour = String(hh).padStart(2, '0');
+        const minute = String(mm).padStart(2, '0');
+        time_iso = buildIsoLocal(yyyy, month, day, hour, minute, '00');
       }
     } catch (e) {
-      // fallback to now
-      time_iso = new Date().toISOString();
+      // fallback below
+    }
+
+    if (!time_iso) {
+      const ukNow = getUkNowParts();
+      time_iso = buildIsoLocal(ukNow.year, ukNow.month, ukNow.day, ukNow.hour, ukNow.minute, ukNow.second);
     }
 
     const modeLower = selectedMode.toLowerCase();
@@ -142,6 +234,15 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false }) 
       time: selectedTime,
     };
 
+    console.log('SELECTED DATE/TIME', {
+      selectedDate,
+      selectedTime,
+      dateTouched,
+      timeTouched,
+      untouchedDateTime,
+      time_iso,
+    });
+
     console.log('[SearchForm] payload before validation:', { origin_id: payload.origin_id, destination_id: payload.destination_id });
     // Ensure we have AtcoCodes (origin_id/destination_id) before searching
     if (!payload.origin_id || !payload.destination_id) {
@@ -154,6 +255,7 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false }) 
     }
 
     try {
+      console.log("SENDING REQUEST", payload);
       console.log('Journey request:', { origin_id: payload.origin_id, destination_id: payload.destination_id });
       const result = await onSearch(payload as any);
       if (result && Array.isArray(result)) setJourneys(result);
@@ -172,21 +274,9 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false }) 
   };
 
   useEffect(() => {
-    // set default date = today and time = current rounded to nearest 5 minutes
-    const now = new Date();
-    const pad = (n: number) => String(n).padStart(2, '0');
-    const roundTo = (d: Date, minutes = 5) => {
-      const ms = 1000 * 60 * minutes;
-      return new Date(Math.ceil(d.getTime() / ms) * ms);
-    };
-    const rounded = roundTo(now, 5);
-    const hh = pad(rounded.getHours());
-    const mm = pad(rounded.getMinutes());
-    const yyyy = now.getFullYear();
-    const mmn = pad(now.getMonth() + 1);
-    const dd = pad(now.getDate());
-    setSelectedDate(`${yyyy}-${mmn}-${dd}`);
-    setSelectedTime(`${hh}:${mm}`);
+    // set default date/time = tomorrow at 15:00 (UK local)
+    setSelectedDate(getUkTomorrowDateString());
+    setSelectedTime('15:00');
   }, []);
 
   // Sync inputs when user selects a stop from the map
@@ -198,60 +288,195 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false }) 
     if (ui.selectedDestinationName) setTo(ui.selectedDestinationName);
   }, [ui.selectedDestinationName]);
 
+  const filterAndRank = (results: Stop[], query: string): Stop[] => {
+    const q = query.trim().toLowerCase();
+    return (results || [])
+      .map((stop) => ({ stop, score: scoreMatch(q, stop?.name || '') }))
+      .filter((row) => row.score >= 0)
+      .sort((a, b) => b.score - a.score || (a.stop.name || '').localeCompare(b.stop.name || ''))
+      .slice(0, 8)
+      .map((row) => row.stop);
+  };
+
+  const fetchSuggestions = (query: string): Stop[] => {
+    if (!query || query.trim().length < 2) return [];
+    const valid = validStopIds || new Set<string>();
+    const source = Array.isArray(availableStops) ? availableStops : [];
+    const routable = valid.size > 0 ? source.filter((r: any) => valid.has(r.id)) : source;
+    return filterAndRank(routable, query);
+  };
+
   useEffect(() => {
-    let active = true;
-    const doSearch = async () => {
-      if (!from || from.length < 2) {
-        setFromSuggestions([]);
-        return;
+    let cancelled = false;
+    const t = window.setTimeout(() => {
+      const list = fetchSuggestions(from);
+      if (!cancelled) {
+        setFromSuggestions(list);
+        setActiveFromIndex(list.length ? 0 : -1);
       }
-      try {
-        const results = await searchStops(from, 5);
-        const valid = validStopIds || new Set<string>();
-        const filtered = Array.isArray(results) ? results.filter((r: any) => valid.has(r.id)) : [];
-        console.log('[SearchForm] Total suggestions:', Array.isArray(results) ? results.length : 0, 'Routable:', filtered.length);
-        if (active) setFromSuggestions(filtered);
-      } catch (e) {
-        setFromSuggestions([]);
+    }, 300);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+    };
+  }, [from, validStopIds, availableStops]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const t = window.setTimeout(() => {
+      const list = fetchSuggestions(to);
+      if (!cancelled) {
+        setToSuggestions(list);
+        setActiveToIndex(list.length ? 0 : -1);
+      }
+    }, 300);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+    };
+  }, [to, validStopIds, availableStops]);
+
+  useEffect(() => {
+    const onDocPointer = (ev: MouseEvent) => {
+      if (!formRef.current) return;
+      if (!formRef.current.contains(ev.target as Node)) {
+        setOpenDropdown(null);
       }
     };
-    doSearch();
-    return () => { active = false; };
-  }, [from]);
+    document.addEventListener('mousedown', onDocPointer);
+    return () => document.removeEventListener('mousedown', onDocPointer);
+  }, []);
 
-  // Auto-adjust time if user picks earlier time for today
-  useEffect(() => {
-    if (!selectedDate || !selectedTime) return;
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const selDate = new Date(selectedDate + 'T00:00:00');
-    if (selDate.getTime() === today.getTime()) {
-      const selectedDateTime = new Date(selectedDate + 'T' + selectedTime + ':00');
-      if (selectedDateTime < now) {
-        // adjust to current time rounded to nearest 5
-        const ms = 1000 * 60 * 5;
-        const adjusted = new Date(Math.ceil(now.getTime() / ms) * ms);
-        const pad = (n: number) => String(n).padStart(2, '0');
-        setSelectedTime(`${pad(adjusted.getHours())}:${pad(adjusted.getMinutes())}`);
-      }
+  const selectFromSuggestion = (s: Stop) => {
+    setFrom(s.name);
+    setSelectedOrigin(s.id, s.name);
+    if (onSelectFrom) onSelectFrom(s);
+    setOpenDropdown(null);
+  };
+
+  const selectToSuggestion = (s: Stop) => {
+    setTo(s.name);
+    setSelectedDestination(s.id, s.name);
+    setOpenDropdown(null);
+  };
+
+  const handleFromKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!fromSuggestions.length) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setOpenDropdown('from');
+      setActiveFromIndex((prev) => Math.min(fromSuggestions.length - 1, prev + 1));
+      return;
     }
-  }, [selectedDate, selectedTime]);
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setOpenDropdown('from');
+      setActiveFromIndex((prev) => Math.max(0, prev - 1));
+      return;
+    }
+    if (e.key === 'Enter' && openDropdown === 'from') {
+      const idx = activeFromIndex >= 0 ? activeFromIndex : 0;
+      const chosen = fromSuggestions[idx];
+      if (chosen) {
+        e.preventDefault();
+        selectFromSuggestion(chosen);
+      }
+      return;
+    }
+    if (e.key === 'Escape') {
+      setOpenDropdown(null);
+    }
+  };
+
+  const handleToKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!toSuggestions.length) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setOpenDropdown('to');
+      setActiveToIndex((prev) => Math.min(toSuggestions.length - 1, prev + 1));
+      return;
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setOpenDropdown('to');
+      setActiveToIndex((prev) => Math.max(0, prev - 1));
+      return;
+    }
+    if (e.key === 'Enter' && openDropdown === 'to') {
+      const idx = activeToIndex >= 0 ? activeToIndex : 0;
+      const chosen = toSuggestions[idx];
+      if (chosen) {
+        e.preventDefault();
+        selectToSuggestion(chosen);
+      }
+      return;
+    }
+    if (e.key === 'Escape') {
+      setOpenDropdown(null);
+    }
+  };
+
+  const renderHighlightedName = (name: string, query: string) => {
+    const q = (query || '').trim();
+    if (!q) return name;
+    const re = new RegExp(`(${escapeRegExp(q)})`, 'ig');
+    const parts = name.split(re);
+    return (
+      <>
+        {parts.map((part, idx) => (
+          part.toLowerCase() === q.toLowerCase()
+            ? <strong key={`${part}-${idx}`}>{part}</strong>
+            : <span key={`${part}-${idx}`}>{part}</span>
+        ))}
+      </>
+    );
+  };
 
   return (
-    <form className="searchform" onSubmit={handleSubmit}>
+    <form ref={formRef} className="searchform" onSubmit={handleSubmit}>
       <div className="searchform__grid">
         <div className="searchform__field">
           <label htmlFor="from-input" className="visually-hidden">{t.fromLabel}</label>
-          <input
-            id="from-input"
-            name="from"
-            list="city-suggestions"
-            value={from}
-            onChange={(e) => setFrom(capitalizeWords(e.target.value))}
-            className="searchform__input"
-            placeholder={t.fromPlaceholder as string}
-            aria-label={t.fromLabel as string}
-          />
+          <div className="searchform__input-wrap">
+            <Search className="searchform__input-icon" size={16} aria-hidden />
+            <input
+              id="from-input"
+              name="from"
+              value={from}
+              onFocus={() => setOpenDropdown('from')}
+              onKeyDown={handleFromKeyDown}
+              onChange={(e) => {
+                setFrom(capitalizeWords(e.target.value));
+                if (selectedOriginId) {
+                  setSelectedOrigin(null, null);
+                }
+                setOpenDropdown('from');
+              }}
+              className="searchform__input searchform__input--with-icon"
+              placeholder={t.fromPlaceholder as string}
+              aria-label={t.fromLabel as string}
+              autoComplete="off"
+            />
+          </div>
+          {openDropdown === 'from' && from.trim().length > 0 && fromSuggestions.length > 0 && (
+            <ul className="searchform__suggestions" role="listbox" aria-label="Origin suggestions">
+              {fromSuggestions.map((s, idx) => (
+                <li
+                  key={s.id}
+                  role="option"
+                  aria-selected={idx === activeFromIndex}
+                  className={`searchform__suggestion-item ${idx === activeFromIndex ? 'is-active' : ''}`}
+                  onMouseEnter={() => setActiveFromIndex(idx)}
+                  onMouseDown={(ev) => ev.preventDefault()}
+                  onClick={() => selectFromSuggestion(s)}
+                >
+                  <span>{renderHighlightedName(s.name, from)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
           {fieldErrors.from && <div className="field-error" role="alert">{fieldErrors.from}</div>}
         </div>
 
@@ -263,16 +488,44 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false }) 
 
         <div className="searchform__field">
           <label htmlFor="to-input" className="visually-hidden">{t.toLabel}</label>
-          <input
-            id="to-input"
-            name="to"
-            list="city-suggestions"
-            value={to}
-            onChange={(e) => setTo(capitalizeWords(e.target.value))}
-            className="searchform__input"
-            placeholder={t.toPlaceholder as string}
-            aria-label={t.toLabel as string}
-          />
+          <div className="searchform__input-wrap">
+            <Search className="searchform__input-icon" size={16} aria-hidden />
+            <input
+              id="to-input"
+              name="to"
+              value={to}
+              onFocus={() => setOpenDropdown('to')}
+              onKeyDown={handleToKeyDown}
+              onChange={(e) => {
+                setTo(capitalizeWords(e.target.value));
+                if (selectedDestinationId) {
+                  setSelectedDestination(null, null);
+                }
+                setOpenDropdown('to');
+              }}
+              className="searchform__input searchform__input--with-icon"
+              placeholder={t.toPlaceholder as string}
+              aria-label={t.toLabel as string}
+              autoComplete="off"
+            />
+          </div>
+          {openDropdown === 'to' && to.trim().length > 0 && toSuggestions.length > 0 && (
+            <ul className="searchform__suggestions" role="listbox" aria-label="Destination suggestions">
+              {toSuggestions.map((s, idx) => (
+                <li
+                  key={s.id}
+                  role="option"
+                  aria-selected={idx === activeToIndex}
+                  className={`searchform__suggestion-item ${idx === activeToIndex ? 'is-active' : ''}`}
+                  onMouseEnter={() => setActiveToIndex(idx)}
+                  onMouseDown={(ev) => ev.preventDefault()}
+                  onClick={() => selectToSuggestion(s)}
+                >
+                  <span>{renderHighlightedName(s.name, to)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
           {fieldErrors.to && <div className="field-error" role="alert">{fieldErrors.to}</div>}
         </div>
       </div>
@@ -283,35 +536,34 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false }) 
           <button aria-pressed={!isDepart} aria-labelledby="timeToggleLabel" type="button" className={`toggle-btn ${!isDepart ? 'mode__btn--active' : ''}`} onClick={() => setIsDepart(false)}>{t.arrive}</button>
         </div>
 
-        <div className="date-time-stacked">
-          <div className="date-input-wrap">
-            <label htmlFor="date-input" className="visually-hidden">{t.date}</label>
-            <input
-              id="date-input"
-              ref={dateRef}
-              name="date"
-              type="date"
-              className="searchform__input"
-              aria-label={t.date}
-              value={selectedDate}
-              onChange={(e) => setSelectedDate(e.target.value)}
-            />
-          </div>
+        <div className="searchform__date-time-simple">
+          <label htmlFor="date-input" className="visually-hidden">{t.date}</label>
+          <input
+            id="date-input"
+            name="date"
+            type="date"
+            className="searchform__input"
+            aria-label={t.date}
+            value={selectedDate}
+            onChange={(e) => {
+              setDateTouched(true);
+              setSelectedDate(e.target.value);
+            }}
+          />
 
-          <div className="time-input-wrap">
-            <label htmlFor="time-input" className="visually-hidden">{t.time}</label>
-            <Clock className="clock-icon" size={18} strokeWidth={2} aria-hidden />
-            <input
-              id="time-input"
-              ref={timeRef}
-              name="time"
-              type="time"
-              className="searchform__input"
-              aria-label={t.time}
-              value={selectedTime}
-              onChange={(e) => setSelectedTime(e.target.value)}
-            />
-          </div>
+          <label htmlFor="time-input" className="visually-hidden">{t.time}</label>
+          <input
+            id="time-input"
+            name="time"
+            type="time"
+            className="searchform__input"
+            aria-label={t.time}
+            value={selectedTime}
+            onChange={(e) => {
+              setTimeTouched(true);
+              setSelectedTime(e.target.value);
+            }}
+          />
 
           {(fieldErrors.date || fieldErrors.time) && (
             <div className="field-error" role="alert">{fieldErrors.date || fieldErrors.time}</div>
@@ -342,37 +594,6 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false }) 
           {t.rail}
         </button>
       </div>
-
-      <datalist id="city-suggestions">
-        {SUGGESTED_CITIES.map((c) => (
-          <option key={c} value={c} />
-        ))}
-      </datalist>
-
-      {fromSuggestions.length > 0 && (
-        <ul className="suggestions" role="listbox">
-          {fromSuggestions.map((s) => (
-            <li key={s.id} role="option" onClick={() => {
-              // ensure we always use ATCO id
-              const stop = s;
-              console.log('Selected stop (suggestion):', stop);
-              console.log('Using ATCO:', stop.id);
-              if (!stop.id || !(/^[\d]+$/.test(String(stop.id)))) {
-                console.warn('Invalid stop ID, ignoring suggestion:', stop);
-                return;
-              }
-              const valid = validStopIds || new Set<string>();
-              if (!valid.has(stop.id)) {
-                console.warn('Blocked invalid stop (not routable):', stop);
-                return;
-              }
-              setFrom(s.name);
-              setSelectedOrigin(s.id, s.name);
-              if (onSelectFrom) onSelectFrom(s);
-            }}>{s.name} — {s.type}</li>
-          ))}
-        </ul>
-      )}
 
       <div className="searchform__actions">
         <button className="searchform__button" type="submit" disabled={isLoading} aria-disabled={isLoading} aria-busy={isLoading}>

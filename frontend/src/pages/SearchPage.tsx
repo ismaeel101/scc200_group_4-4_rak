@@ -14,6 +14,7 @@ const SearchPage: React.FC = () => {
   const planLabel = typeof t.planYourJourney === 'string' ? t.planYourJourney : 'Plan your journey';
   const [loading, setLoading] = useState(false);
   const [stops, setStops] = useState<any[]>([]);
+  const [mapMode, setMapMode] = useState<'all' | 'bus' | 'rail'>('all');
   const overlayRef = React.useRef<HTMLDivElement | null>(null);
 
   React.useEffect(() => {
@@ -43,7 +44,7 @@ const SearchPage: React.FC = () => {
         <aside className="searchpage__panel" role="complementary" aria-label={`${planLabel} panel`}>
           <div className="searchpage__panel-inner">
             <h2 className="searchpage__panel-title">{planLabel}</h2>
-            
+
             {/* Added WeatherWidget here for Task W7 */}
             <div style={{ marginBottom: '1rem' }}>
               <WeatherWidget />
@@ -52,6 +53,7 @@ const SearchPage: React.FC = () => {
             <div className="searchpage__card">
               <SearchForm
                 isLoading={loading}
+                onModeChange={setMapMode}
                 onSelectFrom={(s) => {
                   const valid = validStopIds || new Set<string>();
                   if (!valid.has(s.id)) {
@@ -62,30 +64,22 @@ const SearchPage: React.FC = () => {
                 }}
                 onSearch={async (data: any) => {
                   setLoading(true);
-                  try {
-                    const res = await fetch('http://127.0.0.1:8000/journeys', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({
+                  navigate('/results', {
+                    state: {
+                      search: {
                         origin_id: data.origin_id,
                         destination_id: data.destination_id,
                         time_type: data.time_type,
                         time_iso: data.time_iso,
                         modes: data.modes,
                         max_options: data.max_options || 5,
-                      }),
-                    });
-                    if (!res.ok) throw new Error('Planner request failed');
-                    const body = await res.json();
-                    const journeys = body.journeys || [];
-                    setLoading(false);
-                    navigate('/results', { state: { journeys, origin: data.from || '', destination: data.to || '' } });
-                    return journeys;
-                  } catch (e) {
-                    setLoading(false);
-                    navigate('/results', { state: { journeys: [], origin: data.from || '', destination: data.to || '' } });
-                    return [];
-                  }
+                      },
+                      origin: data.from || '',
+                      destination: data.to || '',
+                    }
+                  });
+                  setLoading(false);
+                  return null;
                 }}
               />
             </div>
@@ -93,7 +87,7 @@ const SearchPage: React.FC = () => {
         </aside>
 
         <section className="searchpage__map" role="main">
-          <HomeMap stops={stops} />
+          <HomeMap stops={stops} mode={mapMode} />
         </section>
       </div>
     </main>

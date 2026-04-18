@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { useLocation } from 'react-router-dom';
 import "./ResultsPage.css";
 import translations from '../translations';
@@ -6,6 +6,7 @@ import { useUi } from '../contexts/UiContext';
 import { Train, Bus, Clock, ArrowRight } from "lucide-react";
 import { Journey } from '../types/journey';
 import { formatTime } from '../utils/formatTime';
+import RouteMap from '../components/RouteMap';
 
 const ResultsPage: React.FC = () => {
   const { language } = useUi();
@@ -29,10 +30,83 @@ const ResultsPage: React.FC = () => {
   const originName = state.origin || (state.search && state.search.from) || (state.data && state.data.from) || '';
   const destinationName = state.destination || (state.search && state.search.to) || (state.data && state.data.to) || '';
   const passedJourneys: any[] = state.journeys || (state.data && state.data.journeys) || [];
-  const allJourneys: any[] = passedJourneys;
+  const [journeys, setJourneys] = useState<any[]>(Array.isArray(passedJourneys) ? passedJourneys : []);
+  const [requestCompleted, setRequestCompleted] = useState<boolean>(Array.isArray(passedJourneys) && passedJourneys.length > 0);
 
-  // We expect the router to pass pre-filtered journeys in state; use them directly
-  const filteredBySearch = allJourneys;
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadJourneys = async () => {
+      if (!search || !search.origin_id || !search.destination_id || !search.time_type || !search.time_iso) {
+        if (!cancelled) {
+          setJourneys(Array.isArray(passedJourneys) ? passedJourneys : []);
+          setRequestCompleted(true);
+        }
+        return;
+      }
+
+      if (!cancelled) {
+        setRequestCompleted(false);
+      }
+
+      try {
+        const payload = {
+          origin_id: search.origin_id,
+          destination_id: search.destination_id,
+          time_type: search.time_type,
+          time_iso: search.time_iso,
+          modes: search.modes || 'mixed',
+          max_options: search.max_options || 5,
+        };
+
+        console.log("SENDING REQUEST", payload);
+        const res = await fetch('http://127.0.0.1:8000/journeys', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+
+        if (!res.ok) throw new Error('Planner request failed');
+        const body = await res.json();
+        const journeysRaw = Array.isArray(body?.journeys) ? body.journeys : [];
+
+        const selectedTime = new Date(search.time_iso);
+        const validSelectedTime = Number.isFinite(selectedTime.getTime());
+        const twoHoursMs = 2 * 60 * 60 * 1000;
+        const filtered = validSelectedTime
+          ? journeysRaw.filter((j: any) => {
+            if (search.time_type === 'arrive_by') {
+              const arrive = new Date(j?.arrive_time || j?.arriveTime || '').getTime();
+              return Number.isFinite(arrive)
+                && arrive <= selectedTime.getTime()
+                && arrive >= selectedTime.getTime() - twoHoursMs;
+            }
+            const depart = new Date(j?.depart_time || j?.departureTime || '').getTime();
+            return Number.isFinite(depart)
+              && depart >= selectedTime.getTime()
+              && depart <= selectedTime.getTime() + twoHoursMs;
+          })
+          : journeysRaw;
+
+        if (!cancelled) {
+          setJourneys(filtered);
+          setRequestCompleted(true);
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setJourneys([]);
+          setRequestCompleted(true);
+        }
+      }
+    };
+
+    loadJourneys();
+    return () => {
+      cancelled = true;
+    };
+  }, [search]);
+
+  const filteredBySearch = journeys;
 
   const [selectedJourney, setSelectedJourney] = useState<Journey | null>(null);
   useEffect(() => {
@@ -42,6 +116,12 @@ const ResultsPage: React.FC = () => {
 
   const journeysToRender: any[] = Array.isArray(filteredBySearch) ? filteredBySearch : [];
   const activeJourney = selectedJourney || (journeysToRender && journeysToRender[0]) || null;
+  const activeLegs = Array.isArray((activeJourney as any)?.legs)
+    ? (activeJourney as any).legs.filter((leg: any) => {
+      const mode = (leg?.mode || '').toString().toLowerCase();
+      return mode === 'bus' || mode === 'rail' || mode === 'train';
+    })
+    : [];
 
   const formatTimeSafe = (v: any) => (v ? formatTime(v) : '');
   const reliabilityText = (j: any) => (j && (j.reliability_band || j.reliability || '')).toString() || 'unknown';
@@ -63,7 +143,9 @@ const ResultsPage: React.FC = () => {
             </section>
 
             <div className="routes-list">
-              {journeysToRender.length === 0 ? (
+              {!requestCompleted ? (
+                <div className="card no-results">Loading routes…</div>
+              ) : journeysToRender.length === 0 ? (
                 <div className="card no-results">No routes found for {originName || '—'} → {destinationName || '—'}</div>
               ) : (
                 (journeysToRender || []).map((j: any, idx: number) => {
@@ -96,9 +178,6 @@ const ResultsPage: React.FC = () => {
                                 <span className="line-label">{leg.line || ''}</span>
                               </span>
                             ))}
-                            <span className="connect-arrow" aria-hidden>
-                              <ArrowRight size={14} />
-                            </span>
                           </div>
 
                           <span className={`badge badge--${relClass}`}>{relText}</span>
@@ -118,8 +197,11 @@ const ResultsPage: React.FC = () => {
               <h3 className="card__title">{routeMapLabel}</h3>
               <div className="map-placeholder" role="region" aria-label={routeMapLabel}>
                 <div className="map-inner" style={{ height: '100%' }}>
-                  {/* Route map rendering not required for basic flow; keep placeholder */}
-                  {activeJourney ? <div style={{ padding: 12 }}>{routeMapLabel}</div> : null}
+                  {activeJourney && activeLegs.length > 0 ? (
+                    <RouteMap legs={activeLegs} />
+                  ) : (
+                    activeJourney ? <div style={{ padding: 12 }}>{routeMapLabel}</div> : null
+                  )}
                 </div>
               </div>
             </section>
@@ -152,6 +234,7 @@ const ResultsPage: React.FC = () => {
                       const fromVal = leg?.from_stop || leg?.from || '';
                       const toVal = leg?.to_stop || leg?.to || '';
                       const durationVal = Number.isFinite(Number(leg?.durationMinutes)) ? Number(leg?.durationMinutes) : '';
+                      const durationText = modeLabel === 'walk' ? `${durationVal} walking` : durationVal !== '' ? `${durationVal} m` : '';
 
                       return (
                         <React.Fragment key={idx}>
@@ -159,7 +242,7 @@ const ResultsPage: React.FC = () => {
                             <div className="leg__left">
                               <span className="leg__icon">{(modeLabel === 'rail' || modeLabel === 'train') ? <Train size={20} /> : <Bus size={20} />}</span>
                               <div className="leg__meta">
-                                <div className="leg__title">{modeLabel.toUpperCase()}{leg.line ? ` ${leg.line}` : ''} <span className="leg__duration">({durationVal}{modeLabel === 'walk' ? ' walking' : durationVal !== '' ? ' m' : ''})</span></div>
+                                <div className="leg__title">{modeLabel.toUpperCase()}{leg.line ? ` ${leg.line}` : ''}{durationText ? <span className="leg__duration"> ({durationText})</span> : null}</div>
                                 <div className="leg__secondary">
                                   <div>{fromLabel}: {fromVal}</div>
                                   <div>{toLabel}: {toVal}</div>

@@ -8,7 +8,7 @@ Run from backend directory: python3 build_rail.py
 import sqlite3
 from pathlib import Path
 
-SRC = '/workspace/rail.db'
+SRC = '/workspace/backend/rail.db'
 DST = '/tmp/rail_nw.db'
 NW_STANOX = ('11', '30')
 

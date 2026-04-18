@@ -8,9 +8,10 @@ import './HomeMap.css';
 
 type Props = {
   stops?: Stop[];
+  mode?: 'all' | 'bus' | 'rail';
 };
 
-const HomeMap: React.FC<Props> = ({ stops = [] }) => {
+const HomeMap: React.FC<Props> = ({ stops = [], mode = 'all' }) => {
   // Regional centre for North West UK
   const center: [number, number] = [54.1, -2.5];
 
@@ -40,7 +41,7 @@ const HomeMap: React.FC<Props> = ({ stops = [] }) => {
               attribution='&copy; OpenStreetMap contributors'
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             />
-            <LiveStopLayer />
+            <LiveStopLayer mode={mode} />
             {stops.length > 0 && <StopMarkers stops={stops} />}
           </MapC>
         </div>

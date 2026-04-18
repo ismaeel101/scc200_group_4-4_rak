@@ -1,8 +1,8 @@
-import React, { useEffect } from 'react';
-import { MapContainer, TileLayer, Polyline, Marker, useMap } from 'react-leaflet';
+import React, { useEffect, useMemo, useState } from 'react';
+import { MapContainer, TileLayer, Polyline, CircleMarker, useMap } from 'react-leaflet';
 import './RouteMap.css';
 import 'leaflet/dist/leaflet.css';
-import { Journey, Leg, Coordinates } from '../types/journey';
+import { Coordinates } from '../types/journey';
 
 function FitBounds({ positions }: { positions: Coordinates[] }) {
   const map = useMap();
@@ -45,24 +45,112 @@ function FitBounds({ positions }: { positions: Coordinates[] }) {
   return null;
 }
 
-const modeColor: Record<string, string> = {
-  rail: '#2563eb',
-  train: '#2563eb',
-  bus: '#f97316',
-  tram: '#f59e0b',
-  ferry: '#0ea5e9',
-  walk: '#10b981',
+const modeColor = (mode: string) => {
+  const m = (mode || '').toLowerCase();
+  if (m === 'rail' || m === 'train') return '#ef4444';
+  if (m === 'bus') return '#2563eb';
+  return '#64748b';
 };
 
-const RouteMap: React.FC<{ legs?: Leg[]; center?: Coordinates | undefined }> = ({ legs = [], center }) => {
+const toNum = (v: any): number | null => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+};
+
+type RawLeg = {
+  mode?: string;
+  from_lat?: number;
+  from_lon?: number;
+  to_lat?: number;
+  to_lon?: number;
+};
+
+type RouteSegment = {
+  mode: string;
+  points: [number, number][];
+};
+
+const RouteMap: React.FC<{ legs?: RawLeg[] }> = ({ legs = [] }) => {
   const MapC: any = MapContainer;
   const TileC: any = TileLayer;
   const PolyC: any = Polyline;
-  const MarkC: any = Marker;
+  const CircleC: any = CircleMarker;
 
-  // choose center fallback
-  const fallbackCoord: Coordinates | undefined =
-    center || (legs && legs.length && legs[0] && legs[0].coordinates && legs[0].coordinates.from) || undefined;
+  const routeSegments = useMemo(() => {
+    return (legs || [])
+      .map((leg) => {
+        const fromLat = toNum((leg as any)?.from_lat);
+        const fromLon = toNum((leg as any)?.from_lon);
+        const toLat = toNum((leg as any)?.to_lat);
+        const toLon = toNum((leg as any)?.to_lon);
+        if (fromLat === null || fromLon === null || toLat === null || toLon === null) return null;
+        return {
+          mode: (leg?.mode || '').toString(),
+          points: [[fromLat, fromLon], [toLat, toLon]] as [number, number][],
+        };
+      })
+      .filter((x): x is RouteSegment => !!x);
+  }, [legs]);
+
+  const [routedSegments, setRoutedSegments] = useState<RouteSegment[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const controller = new AbortController();
+
+    const fetchRoutes = async () => {
+      if (!routeSegments.length) {
+        setRoutedSegments([]);
+        return;
+      }
+
+      try {
+        const routed = await Promise.all(
+          routeSegments.map(async (segment) => {
+            const from = segment.points[0];
+            const to = segment.points[segment.points.length - 1];
+            const url = `https://router.project-osrm.org/route/v1/driving/${from[1]},${from[0]};${to[1]},${to[0]}?overview=full&geometries=geojson`;
+            const res = await fetch(url, { signal: controller.signal });
+            if (!res.ok) return segment;
+            const data = await res.json();
+            const coords = data?.routes?.[0]?.geometry?.coordinates;
+            if (!Array.isArray(coords) || coords.length < 2) return segment;
+
+            const points = coords
+              .map((c: any) => {
+                const lon = toNum(Array.isArray(c) ? c[0] : null);
+                const lat = toNum(Array.isArray(c) ? c[1] : null);
+                if (lat === null || lon === null) return null;
+                return [lat, lon] as [number, number];
+              })
+              .filter((p: [number, number] | null): p is [number, number] => !!p);
+
+            return points.length >= 2 ? { mode: segment.mode, points } : segment;
+          })
+        );
+
+        if (!cancelled) setRoutedSegments(routed);
+      } catch {
+        if (!cancelled) setRoutedSegments(routeSegments);
+      }
+    };
+
+    fetchRoutes();
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [routeSegments]);
+
+  const displaySegments = routedSegments.length ? routedSegments : routeSegments;
+
+  const allPoints = useMemo(
+    () => displaySegments.flatMap((s) => s.points).map((p) => [p[0], p[1]] as Coordinates),
+    [displaySegments]
+  );
+
+  const fallbackCoord: Coordinates | undefined = allPoints.length ? allPoints[0] : undefined;
 
   // Bounds roughly for North West UK
   const maxBounds: [number, number][] = [
@@ -76,21 +164,33 @@ const RouteMap: React.FC<{ legs?: Leg[]; center?: Coordinates | undefined }> = (
         attribution='&copy; OpenStreetMap contributors'
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
       />
-      {legs.map((leg, idx) => {
-        const pts: Coordinates[] = leg.coordinates.polyline && leg.coordinates.polyline.length > 0 ? leg.coordinates.polyline : [leg.coordinates.from, leg.coordinates.to];
+      {displaySegments.map((segment, idx) => {
         return (
-          <PolyC key={idx} positions={pts.map((p) => [p[0], p[1]])} pathOptions={{ color: modeColor[leg.mode || 'train'] || '#2563eb', weight: 4, opacity: 0.95 }} />
+          <PolyC
+            key={idx}
+            positions={segment.points.map((p) => [p[0], p[1]])}
+            pathOptions={{ color: modeColor(segment.mode), weight: 5, opacity: 0.95 }}
+          />
         );
       })}
 
-      {/* markers at leg start points */}
-      {legs.map((leg, idx) => (
-        <MarkC key={`m-${idx}`} position={[leg.coordinates.from[0], leg.coordinates.from[1]]} />
-      ))}
+      {allPoints.length > 0 && (
+        <CircleC
+          center={[allPoints[0][0], allPoints[0][1]]}
+          radius={8}
+          pathOptions={{ color: '#15803d', fillColor: '#22c55e', fillOpacity: 1, weight: 2 }}
+        />
+      )}
 
-      <FitBounds
-        positions={legs.flatMap((l) => (l.coordinates.polyline && l.coordinates.polyline.length ? l.coordinates.polyline : [l.coordinates.from, l.coordinates.to]))}
-      />
+      {allPoints.length > 1 && (
+        <CircleC
+          center={[allPoints[allPoints.length - 1][0], allPoints[allPoints.length - 1][1]]}
+          radius={8}
+          pathOptions={{ color: '#b91c1c', fillColor: '#ef4444', fillOpacity: 1, weight: 2 }}
+        />
+      )}
+
+      <FitBounds positions={allPoints} />
     </MapC>
   );
 };

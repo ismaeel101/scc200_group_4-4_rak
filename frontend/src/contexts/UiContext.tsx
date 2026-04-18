@@ -1,4 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import { Stop } from '../types/stop';
 
 type Language = { code: string; label: string; flag: string };
 
@@ -21,6 +22,9 @@ type UiContextType = {
     // routable stop ids cache
     validStopIds?: Set<string>;
     setValidStopIds: (ids: Set<string>) => void;
+    // loaded map stops cache (for local autocomplete)
+    availableStops?: Stop[];
+    setAvailableStops: (stops: Stop[]) => void;
 };
 
 const defaultLang: Language = { code: 'en', label: 'English', flag: '🇬🇧' };
@@ -37,6 +41,7 @@ export const UiProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     const [selectedDestinationId, setSelectedDestinationId] = useState<string | null>(null);
     const [selectedDestinationName, setSelectedDestinationName] = useState<string | null>(null);
     const [validStopIds, setValidStopIds] = useState<Set<string>>(new Set());
+    const [availableStops, setAvailableStopsState] = useState<Stop[]>([]);
 
     // Load routable stop ids once on startup from the backend timetable
     useEffect(() => {
@@ -88,6 +93,7 @@ export const UiProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         selectedDestinationId,
         selectedDestinationName,
         validStopIds,
+        availableStops,
         setSelectedDestination: (id: string | null, name: string | null = null) => {
             console.log('[UiContext] setSelectedDestination called:', id, name);
             setSelectedDestinationId(id);
@@ -95,6 +101,18 @@ export const UiProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         },
         setValidStopIds: (ids: Set<string>) => {
             setValidStopIds(ids);
+        },
+        setAvailableStops: (stops: Stop[]) => {
+            setAvailableStopsState((prev) => {
+                const byId = new Map<string, Stop>();
+                (prev || []).forEach((s) => {
+                    if (s?.id) byId.set(String(s.id), s);
+                });
+                (stops || []).forEach((s) => {
+                    if (s?.id) byId.set(String(s.id), s);
+                });
+                return Array.from(byId.values());
+            });
         },
     };
 

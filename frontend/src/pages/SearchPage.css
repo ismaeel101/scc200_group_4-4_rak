@@ -54,6 +54,16 @@
   /* slightly more space between sections */
 }
 
+.searchform__date-time-simple {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.searchform__date-time-simple .searchform__input {
+  height: clamp(44px, 3.5rem, 56px);
+}
+
 /* Date/time wrapper styles */
 .date-input-wrap,
 .time-input-wrap {
@@ -157,6 +167,58 @@
   position: relative;
   min-height: clamp(44px, 3.5rem, 56px);
   /* match input height for vertical centering */
+}
+
+.searchform__input-wrap {
+  position: relative;
+}
+
+.searchform__input-icon {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #64748b;
+  pointer-events: none;
+}
+
+.searchform__input--with-icon {
+  padding-left: 36px;
+}
+
+.searchform__suggestions {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 6px);
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  box-shadow: 0 14px 30px rgba(2, 6, 23, 0.12);
+  z-index: 40;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.searchform__suggestion-item {
+  padding: 9px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  color: #0f172a;
+  font-size: 0.94rem;
+}
+
+.searchform__suggestion-item strong {
+  font-weight: 800;
+  color: #0b2136;
+}
+
+.searchform__suggestion-item:hover,
+.searchform__suggestion-item.is-active {
+  background: #eaf2ff;
 }
 
 /* MapPin icon inside From/To inputs */
