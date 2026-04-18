@@ -1,9 +1,9 @@
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo, useEffect, useCallback } from "react";
 import { useLocation } from 'react-router-dom';
 import "./ResultsPage.css";
 import translations from '../translations';
 import { useUi } from '../contexts/UiContext';
-import { Train, Bus, Clock, ArrowRight } from "lucide-react";
+import { Train, Bus, Clock, ArrowRight, ChevronDown, ChevronUp, MapPin } from "lucide-react";
 import { Journey } from '../types/journey';
 import { formatTime } from '../utils/formatTime';
 import WeatherWidget from '../components/WeatherWidget';
@@ -43,6 +43,46 @@ const ResultsPage: React.FC = () => {
 
   const journeysToRender: any[] = Array.isArray(filteredBySearch) ? filteredBySearch : [];
   const activeJourney = selectedJourney || (journeysToRender && journeysToRender[0]) || null;
+
+  // Intermediate stops state: keyed by leg index
+  const [expandedLegs, setExpandedLegs] = useState<Record<number, boolean>>({});
+  const [legStops, setLegStops] = useState<Record<number, { name: string; arrival_time: string; departure_time: string }[]>>({});
+  const [legStopsLoading, setLegStopsLoading] = useState<Record<number, boolean>>({});
+
+  // Reset expanded legs when selected journey changes
+  useEffect(() => {
+    setExpandedLegs({});
+    setLegStops({});
+    setLegStopsLoading({});
+  }, [selectedJourney]);
+
+  const toggleLegStops = useCallback(async (legIdx: number, leg: any) => {
+    setExpandedLegs(prev => {
+      const next = { ...prev, [legIdx]: !prev[legIdx] };
+      return next;
+    });
+    // Fetch intermediate stops if not already loaded
+    if (!legStops[legIdx] && leg?.service_id && leg?.from_seq != null && leg?.to_seq != null && leg?.mode !== 'walk') {
+      setLegStopsLoading(prev => ({ ...prev, [legIdx]: true }));
+      try {
+        const params = new URLSearchParams({
+          service_id: leg.service_id,
+          mode: leg.mode === 'train' ? 'rail' : leg.mode,
+          from_seq: String(leg.from_seq),
+          to_seq: String(leg.to_seq),
+        });
+        const res = await fetch(`http://127.0.0.1:8000/api/leg-stops?${params}`);
+        if (res.ok) {
+          const data = await res.json();
+          setLegStops(prev => ({ ...prev, [legIdx]: data.stops || [] }));
+        }
+      } catch (e) {
+        // ignore
+      } finally {
+        setLegStopsLoading(prev => ({ ...prev, [legIdx]: false }));
+      }
+    }
+  }, [legStops]);
 
   const formatTimeSafe = (v: any) => (v ? formatTime(v) : '');
   const reliabilityText = (j: any) => (j && (j.reliability_band || j.reliability || '')).toString() || 'unknown';
@@ -163,8 +203,39 @@ const ResultsPage: React.FC = () => {
                               <div className="leg__meta">
                                 <div className="leg__title">{modeLabel.toUpperCase()}{leg.line ? ` ${leg.line}` : ''} <span className="leg__duration">({durationVal}{modeLabel === 'walk' ? ' walking' : durationVal !== '' ? ' m' : ''})</span></div>
                                 <div className="leg__secondary">
-                                  <div>{fromLabel}: {fromVal}</div>
-                                  <div>{toLabel}: {toVal}</div>
+                                  <div className="leg__stop leg__stop--from"><MapPin size={14} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 4 }} />{fromLabel}: {fromVal}</div>
+
+                                  {/* Intermediate stops toggle */}
+                                  {modeLabel !== 'walk' && leg?.service_id && leg?.from_seq != null && leg?.to_seq != null && (leg.to_seq - leg.from_seq > 1) && (
+                                    <button
+                                      className="leg__stops-toggle"
+                                      type="button"
+                                      onClick={(e) => { e.stopPropagation(); toggleLegStops(idx, leg); }}
+                                      style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', fontSize: 12, padding: '4px 0', display: 'flex', alignItems: 'center', gap: 4 }}
+                                    >
+                                      {expandedLegs[idx] ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                                      {expandedLegs[idx] ? 'Hide' : 'Show'} {leg.to_seq - leg.from_seq - 1} intermediate stop{leg.to_seq - leg.from_seq - 1 !== 1 ? 's' : ''}
+                                    </button>
+                                  )}
+
+                                  {/* Intermediate stops list */}
+                                  {expandedLegs[idx] && (
+                                    <div className="leg__intermediate-stops" style={{ marginLeft: 18, borderLeft: '2px dashed #d1d5db', paddingLeft: 10, marginTop: 4, marginBottom: 4 }}>
+                                      {legStopsLoading[idx] && <div style={{ fontSize: 12, color: '#9ca3af' }}>Loading stops...</div>}
+                                      {legStops[idx] && legStops[idx].length === 0 && !legStopsLoading[idx] && (
+                                        <div style={{ fontSize: 12, color: '#9ca3af' }}>No intermediate stops</div>
+                                      )}
+                                      {legStops[idx] && legStops[idx].map((stop, sIdx) => (
+                                        <div key={sIdx} style={{ fontSize: 12, color: '#4b5563', padding: '2px 0', display: 'flex', alignItems: 'center', gap: 4 }}>
+                                          <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#9ca3af', display: 'inline-block', flexShrink: 0 }} />
+                                          <span>{stop.name}</span>
+                                          {stop.departure_time && <span style={{ color: '#9ca3af', marginLeft: 'auto' }}>{stop.departure_time}</span>}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+
+                                  <div className="leg__stop leg__stop--to"><MapPin size={14} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 4 }} />{toLabel}: {toVal}</div>
                                 </div>
                               </div>
                             </div>
