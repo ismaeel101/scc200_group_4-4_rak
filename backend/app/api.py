@@ -624,6 +624,13 @@ async def plan_journey(
         raise HTTPException(status_code=400, detail="Origin and destination cannot be identical")
 
     try:
+        # Fetch weather (Lancaster coords) and pass adverse-flag into planner
+        try:
+            weather_data = await fetch_weather(54.047, -2.801)
+            is_adverse = weather_data.get("is_adverse", False) if weather_data else False
+        except Exception:
+            is_adverse = False
+
         raw_journeys = journey_planner.plan(
             origin_id=request.origin_id,
             destination_id=request.destination_id,
@@ -631,6 +638,7 @@ async def plan_journey(
             time_iso=request.time_iso,
             modes=request.modes,
             max_options=request.max_options,
+            is_adverse_weather=is_adverse,
         )
     except NoRouteFoundError:
         return JSONResponse(
