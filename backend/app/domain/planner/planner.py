@@ -178,7 +178,7 @@ class JourneyPlanner:
 
         return None
 
-    def _compute_reliability(self, legs, duration_min, conn, is_adverse_weather=False):
+    def _compute_reliability(self, legs, duration_min, conn):
         score = 100
         explanation = []
         changes = max(0, len([l for l in legs if l.get("mode") != "walk"]) - 1) if legs else 0
@@ -207,11 +207,6 @@ class JourneyPlanner:
         if delayed:
             score -= 10
             explanation.append("Rail delay reported -10")
-
-        # Weather penalty
-        if is_adverse_weather:
-            score -= 10
-            explanation.append("Adverse weather conditions -10")
 
         score = max(0, min(100, score))
         if score >= 80:
@@ -725,7 +720,7 @@ class JourneyPlanner:
     # Main public method
     # ---------------------------
 
-    def plan(self, origin_id=None, destination_id=None, time_type=None, time_iso=None, modes=None, max_options=None, is_adverse_weather=False):
+    def plan(self, origin_id=None, destination_id=None, time_type=None, time_iso=None, modes=None, max_options=None):
         if (
             self.provider is not None
             and origin_id is not None
@@ -850,7 +845,7 @@ class JourneyPlanner:
                 # Look back 10 min to catch buses already in service
                 lookback_dt = requested_dt - timedelta(minutes=10)
                 dep_str = f"{lookback_dt.hour:02d}:{lookback_dt.minute:02d}:00"
-                origin_catch = _catchment(origin_lat, origin_lon, 500)
+                origin_catch = _catchment(origin_lat, origin_lon, 600)
                 origin_stop_ids = [s["id"] for s in origin_catch]
                 dest_stop_ids = set(s["id"] for s in _catchment(dest_lat, dest_lon, 800))
                 dest_stop_ids.add(destination_id)
@@ -858,8 +853,8 @@ class JourneyPlanner:
                 if origin_stop_ids:
                     q = ",".join("?" * len(origin_stop_ids))
 
-                    # Query origin stop first to prioritise trips that serve it directly
-                    # Then supplement with catchment stops for nearby alternatives
+                    # Query exact origin stop from requested_dt (no lookback needed here)
+                    origin_dep_str = f"{requested_dt.hour:02d}:{requested_dt.minute:02d}:00"
                     bus_trips_origin = conn.execute("""
                         SELECT DISTINCT st.trip_id, st.stop_id, st.sequence, st.departure_time,
                                s.line_name
@@ -868,8 +863,8 @@ class JourneyPlanner:
                         JOIN bus.services s ON t.service_id = s.id
                         WHERE st.stop_id = ?
                         AND st.departure_time >= ?
-                        ORDER BY st.departure_time LIMIT 40
-                    """, (origin_stop_ids[0], dep_str)).fetchall()
+                        ORDER BY st.departure_time LIMIT 60
+                    """, (origin_stop_ids[0], origin_dep_str)).fetchall()
 
                     bus_trips_catch = conn.execute(f"""
                         SELECT DISTINCT st.trip_id, st.stop_id, st.sequence, st.departure_time,
@@ -901,7 +896,7 @@ class JourneyPlanner:
                             seen.add(r["trip_id"])
                             other_trip_ids.append(r["trip_id"])
 
-                    trip_ids = (origin_exact_trip_ids + other_trip_ids)[:30]
+                    trip_ids = (origin_exact_trip_ids + other_trip_ids)[:50]
 
                     # Build all downstream stop IDs for these trips
                     ph = ",".join("?" * len(trip_ids))
@@ -926,6 +921,7 @@ class JourneyPlanner:
                     for r in bus_trips:
                         trip_origins.setdefault(r["trip_id"], []).append(r)
 
+                    print(f"DEBUG targeted: origin_stop_ids[0]={origin_stop_ids[0]} origin_trips={len(bus_trips_origin)} catch_trips={len(bus_trips_catch)} trip_ids={len(trip_ids)}")
                     journey_dedup = {}  # line_name -> (arrive_dt, journey)
 
                     for trip_id in trip_ids:
@@ -941,16 +937,33 @@ class JourneyPlanner:
                         # No expensive per-stop catchment here — just use rail_interchange.
 
                         # Pick boarding stop: prefer exact origin stop, then closest
-                        exact_origin = [r for r in o_rows if r["stop_id"] == origin_stop_ids[0]]
+                        # Try sequences from lowest to highest — first one with downstream rail is correct direction
+                        exact_origin = sorted(
+                            [r for r in o_rows if r["stop_id"] == origin_stop_ids[0]],
+                            key=lambda r: r["sequence"]
+                        )
+                        best_o = None
                         if exact_origin:
-                            best_o = min(exact_origin, key=lambda r: r["sequence"])
-                        else:
-                            def _walk(r):
-                                sr = _resolve(r["stop_id"])
-                                if not sr or not sr.get("lat"): return 9999
-                                return self._haversine_m(origin_lat, origin_lon,
-                                    float(sr["lat"]), float(sr["lon"]))
-                            best_o = min(o_rows, key=lambda r: (_walk(r), r["sequence"]))
+                            for candidate in exact_origin:
+                                # Quick check: does this boarding point have any downstream rail stop?
+                                test_ds = conn.execute("""
+                                    SELECT stop_id FROM bus.stop_times
+                                    WHERE trip_id=? AND sequence > ?
+                                    ORDER BY sequence LIMIT 30
+                                """, (trip_id, candidate["sequence"])).fetchall()
+                                if any(d["stop_id"] in rail_interchange for d in test_ds):
+                                    best_o = candidate
+                                    break
+                        if best_o is None:
+                            if exact_origin:
+                                best_o = exact_origin[0]  # fallback to lowest seq
+                            else:
+                                def _walk(r):
+                                    sr = _resolve(r["stop_id"])
+                                    if not sr or not sr.get("lat"): return 9999
+                                    return self._haversine_m(origin_lat, origin_lon,
+                                        float(sr["lat"]), float(sr["lon"]))
+                                best_o = min(o_rows, key=lambda r: (_walk(r), r["sequence"]))
                         board_stop_id = best_o["stop_id"]
                         board_seq = best_o["sequence"]
 
@@ -982,6 +995,8 @@ class JourneyPlanner:
                             best_ds_rail = rail_interchange[ds["stop_id"]]
 
                         if not best_ds or not best_ds_rail:
+                            if line_name in ('100', '1', '41', '42'):
+                                print(f"DEBUG {line_name} {trip_id[:12]}: no best_ds, board={board_stop_id} seq={board_seq}, downstream rail stops: {[d['stop_id'] for d in downstream if d['stop_id'] in rail_interchange][:3]}")
                             continue
 
                         board_r = _resolve(board_stop_id)
@@ -1099,6 +1114,7 @@ class JourneyPlanner:
                         [v[1] for v in journey_dedup.values()],
                         key=lambda j: self._parse_iso(j["arrive_time"]) or datetime.max
                     )
+                    print(f"DEBUG targeted: journey_dedup keys={list(journey_dedup.keys())} all_found={len(all_found)}")
                     if all_found:
                         best_arr = self._parse_iso(all_found[0]["arrive_time"])
                         all_found = [j for j in all_found
@@ -1273,7 +1289,7 @@ class JourneyPlanner:
                             )
                             total_duration = 1
 
-                        score, band, explanation = self._compute_reliability([vehicle], total_duration, conn, is_adverse_weather=is_adverse_weather)
+                        score, band, explanation = self._compute_reliability([vehicle], total_duration, conn)
                         exact_journeys.append(
                             {
                                 "depart_time": depart_dt.isoformat(),
@@ -1330,7 +1346,7 @@ class JourneyPlanner:
                                 from_seq=rc.get("from_seq"),
                                 to_seq=rc.get("to_seq"),
                             )
-                            score, band, explanation = self._compute_reliability([vehicle], total_duration, conn, is_adverse_weather=is_adverse_weather)
+                            score, band, explanation = self._compute_reliability([vehicle], total_duration, conn)
                             rail_direct.append(
                                 {
                                     "depart_time": depart_dt.isoformat(),
@@ -1517,7 +1533,7 @@ class JourneyPlanner:
                                     if total_duration < 0:
                                         continue
 
-                                    score, band, explanation = self._compute_reliability(legs, total_duration, conn, is_adverse_weather=is_adverse_weather)
+                                    score, band, explanation = self._compute_reliability(legs, total_duration, conn)
 
                                     journeys.append(
                                         {
@@ -1695,7 +1711,7 @@ class JourneyPlanner:
                                     if saving_secs < required_saving:
                                         continue
 
-                            score, band, explanation = self._compute_reliability(cur_legs, total_duration, conn, is_adverse_weather=is_adverse_weather)
+                            score, band, explanation = self._compute_reliability(cur_legs, total_duration, conn)
                             journeys_found.append(
                                 {
                                     "depart_time": cur_legs[0]["depart"],
@@ -2011,8 +2027,10 @@ class JourneyPlanner:
                 start_dt = self._parse_iso(j.get("depart_time"))
                 end_dt = self._parse_iso(j.get("arrive_time"))
                 if start_dt is None or end_dt is None:
+                    print(f"DEBUG GOOD: skip - start/end None")
                     continue
                 if end_dt < start_dt:
+                    print(f"DEBUG GOOD: skip - end<start {start_dt} {end_dt}")
                     continue
 
                 total = int(j.get("total_duration_min", 0))
@@ -2024,9 +2042,11 @@ class JourneyPlanner:
                     ldep = self._parse_iso(leg.get("depart"))
                     larr = self._parse_iso(leg.get("arrive"))
                     if ldep is None or larr is None or larr < ldep:
+                        print(f"DEBUG GOOD: skip - leg time invalid {leg.get('mode')} {ldep} {larr}")
                         valid_legs = False
                         break
                     if ldep < prev_arr:
+                        print(f"DEBUG GOOD: skip - leg overlap {leg.get('mode')} ldep={ldep} prev_arr={prev_arr}")
                         valid_legs = False
                         break
 
@@ -2037,9 +2057,11 @@ class JourneyPlanner:
 
                     if leg.get("mode") in ("bus", "rail"):
                         if dur_secs < 60:
+                            print(f"DEBUG GOOD: skip - leg too short {leg.get('mode')} {dur_secs}s")
                             valid_legs = False
                             break
                         if leg.get("from") == leg.get("to"):
+                            print(f"DEBUG GOOD: skip - from==to {leg.get('from')}")
                             valid_legs = False
                             break
 
@@ -2049,17 +2071,25 @@ class JourneyPlanner:
                 if not valid_legs:
                     continue
                 if total <= 0 and leg_sum > 0:
+                    print(f"DEBUG GOOD: skip - total={total} leg_sum={leg_sum}")
                     continue
                 if abs(total - leg_sum) > 2:
                     j["total_duration_min"] = leg_sum
                 good.append(j)
-            except Exception:
+            except Exception as ex:
+                print(f"DEBUG GOOD: exception {ex}")
                 continue
 
         if time_type == "depart_at":
             def _first_vehicle_depart(jj):
-                for leg in jj.get("legs", []):
-                    if leg.get("mode") in ("bus", "rail"):
+                # For mixed bus+rail journeys, use the rail leg departure
+                # since the bus may have departed before requested_dt
+                legs = jj.get("legs", [])
+                rail_legs = [l for l in legs if l.get("mode") == "rail"]
+                if rail_legs:
+                    return self._parse_iso(rail_legs[0].get("depart"))
+                for leg in legs:
+                    if leg.get("mode") == "bus":
                         return self._parse_iso(leg.get("depart"))
                 return self._parse_iso(jj.get("depart_time"))
 

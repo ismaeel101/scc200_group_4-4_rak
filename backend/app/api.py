@@ -163,7 +163,6 @@ class Journey(BaseModel):
     depart_time: datetime
     arrive_time: datetime
     changes: int
-    total_walk_minutes: int = 0
     reliability_score: int = Field(..., ge=0, le=100)
     reliability_band: Literal["High", "Medium", "Low"]
     reliability_explanation: List[str]
@@ -258,7 +257,6 @@ def _parse_journey(raw) -> dict:
         "depart_time": raw.depart_time,
         "arrive_time": raw.arrive_time,
         "changes": raw.changes,
-        "total_walk_minutes": getattr(raw, "total_walk_minutes", 0),
         "reliability_score": getattr(raw, "reliability_score", 0),
         "reliability_band": getattr(raw, "reliability_band", "Low"),
         "reliability_explanation": getattr(raw, "reliability_explanation", []),
@@ -471,13 +469,17 @@ async def get_stops(
 
         results: list[dict] = []
         seen_ids: set[str] = set()
+        NW_PREFIXES = ('2500', '2580', '2590', '2800', '0600', '0610', '0680', '0690', '3200', 'RAIL', '9100', '9400', '4500', '5110', '5120')
+
+        # Apply NW prefix filter to both databases
+        nw_filter = " AND (" + " OR ".join(f"atco_code LIKE '{p}%'" for p in NW_PREFIXES) + ")"
 
         cur = conn.execute(
-            """
+            f"""
             SELECT atco_code AS id, common_name AS name, latitude AS lat, longitude AS lon,
                    CASE WHEN stop_type IN ('RLY', 'RSE', 'TMU', 'MET') THEN 'rail' ELSE 'bus' END as type
             FROM stops
-            WHERE common_name LIKE ?
+            WHERE common_name LIKE ?{nw_filter}
             LIMIT ?
             """,
             (f"%{query}%", limit),
@@ -487,12 +489,13 @@ async def get_stops(
             results.append(d)
             seen_ids.add(d["id"])
 
+        # bus.db may contain national stops — filter to NW only
         try:
             cur2 = conn.execute(
-                """
+                f"""
                 SELECT atco_code AS id, common_name AS name, latitude AS lat, longitude AS lon, 'bus' as type
                 FROM bus.bus_stops
-                WHERE common_name LIKE ?
+                WHERE common_name LIKE ?{nw_filter}
                 LIMIT ?
                 """,
                 (f"%{query}%", limit),
@@ -626,13 +629,6 @@ async def plan_journey(
         raise HTTPException(status_code=400, detail="Origin and destination cannot be identical")
 
     try:
-        # Fetch weather (Lancaster coords) and pass adverse-flag into planner
-        try:
-            weather_data = await fetch_weather(54.047, -2.801)
-            is_adverse = weather_data.get("is_adverse", False) if weather_data else False
-        except Exception:
-            is_adverse = False
-
         raw_journeys = journey_planner.plan(
             origin_id=request.origin_id,
             destination_id=request.destination_id,
@@ -640,7 +636,6 @@ async def plan_journey(
             time_iso=request.time_iso,
             modes=request.modes,
             max_options=request.max_options,
-            is_adverse_weather=is_adverse,
         )
     except NoRouteFoundError:
         return JSONResponse(
@@ -666,12 +661,9 @@ async def plan_journey(
         flags = ["TIMETABLE_ONLY", "LIVE_MISSING", "HISTORICAL_MISSING"]
 
     if sort_by == "time":
-        def _time_sort_key(j):
-            arrive = j["arrive_time"] if isinstance(j["arrive_time"], datetime) else datetime.fromisoformat(str(j["arrive_time"]))
-            # Each change adds 10-min penalty — mirrors planner's _journey_sort_key
-            penalty_min = 10 * j.get("changes", 0)
-            return (arrive.timestamp() + penalty_min * 60, j.get("changes", 0), -j["reliability_score"])
-        annotated_journeys.sort(key=_time_sort_key)
+        annotated_journeys.sort(
+            key=lambda j: (j["total_duration_min"], j["changes"], -j["reliability_score"])
+        )
     else:
         annotated_journeys.sort(
             key=lambda j: (-j["reliability_score"], j["changes"], j["total_duration_min"])
