@@ -163,6 +163,7 @@ class Journey(BaseModel):
     depart_time: datetime
     arrive_time: datetime
     changes: int
+    total_walk_minutes: int = 0
     reliability_score: int = Field(..., ge=0, le=100)
     reliability_band: Literal["High", "Medium", "Low"]
     reliability_explanation: List[str]
@@ -257,6 +258,7 @@ def _parse_journey(raw) -> dict:
         "depart_time": raw.depart_time,
         "arrive_time": raw.arrive_time,
         "changes": raw.changes,
+        "total_walk_minutes": getattr(raw, "total_walk_minutes", 0),
         "reliability_score": getattr(raw, "reliability_score", 0),
         "reliability_band": getattr(raw, "reliability_band", "Low"),
         "reliability_explanation": getattr(raw, "reliability_explanation", []),
@@ -664,9 +666,12 @@ async def plan_journey(
         flags = ["TIMETABLE_ONLY", "LIVE_MISSING", "HISTORICAL_MISSING"]
 
     if sort_by == "time":
-        annotated_journeys.sort(
-            key=lambda j: (j["total_duration_min"], j["changes"], -j["reliability_score"])
-        )
+        def _time_sort_key(j):
+            arrive = j["arrive_time"] if isinstance(j["arrive_time"], datetime) else datetime.fromisoformat(str(j["arrive_time"]))
+            # Each change adds 10-min penalty — mirrors planner's _journey_sort_key
+            penalty_min = 10 * j.get("changes", 0)
+            return (arrive.timestamp() + penalty_min * 60, j.get("changes", 0), -j["reliability_score"])
+        annotated_journeys.sort(key=_time_sort_key)
     else:
         annotated_journeys.sort(
             key=lambda j: (-j["reliability_score"], j["changes"], j["total_duration_min"])

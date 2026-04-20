@@ -126,6 +126,9 @@ const ResultsPage: React.FC = () => {
                         <div className="route-meta">
                           <div className="duration">{durationH > 0 ? `${durationH}h ` : ''}{durationM}m</div>
                           <div className="changes">{changes} change{changes !== 1 ? 's' : ''}</div>
+                          {Number(j?.total_walk_minutes) > 0 && (
+                            <div className="walk-time"><MapPin size={12} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 2 }} />{j.total_walk_minutes}m walk</div>
+                          )}
                         </div>
                       </div>
                       <div className="route-card__foot">
@@ -199,7 +202,7 @@ const ResultsPage: React.FC = () => {
                         <React.Fragment key={idx}>
                           <li className={`leg ${modeLabel === 'walk' ? 'leg--walk' : 'leg--vehicle'}`}>
                             <div className="leg__left">
-                              <span className="leg__icon">{(modeLabel === 'rail' || modeLabel === 'train') ? <Train size={20} /> : <Bus size={20} />}</span>
+                              <span className="leg__icon">{(modeLabel === 'rail' || modeLabel === 'train') ? <Train size={20} /> : modeLabel === 'walk' ? <MapPin size={20} /> : <Bus size={20} />}</span>
                               <div className="leg__meta">
                                 <div className="leg__title">{modeLabel.toUpperCase()}{leg.line ? ` ${leg.line}` : ''} <span className="leg__duration">({durationVal}{modeLabel === 'walk' ? ' walking' : durationVal !== '' ? ' m' : ''})</span></div>
                                 <div className="leg__secondary">
