@@ -178,7 +178,7 @@ class JourneyPlanner:
 
         return None
 
-    def _compute_reliability(self, legs, duration_min, conn):
+    def _compute_reliability(self, legs, duration_min, conn, is_adverse_weather=False):
         score = 100
         explanation = []
         changes = max(0, len([l for l in legs if l.get("mode") != "walk"]) - 1) if legs else 0
@@ -207,6 +207,11 @@ class JourneyPlanner:
         if delayed:
             score -= 10
             explanation.append("Rail delay reported -10")
+
+        # Weather penalty
+        if is_adverse_weather:
+            score -= 10
+            explanation.append("Adverse weather conditions -10")
 
         score = max(0, min(100, score))
         if score >= 80:
@@ -720,7 +725,7 @@ class JourneyPlanner:
     # Main public method
     # ---------------------------
 
-    def plan(self, origin_id=None, destination_id=None, time_type=None, time_iso=None, modes=None, max_options=None):
+    def plan(self, origin_id=None, destination_id=None, time_type=None, time_iso=None, modes=None, max_options=None, is_adverse_weather=False):
         if (
             self.provider is not None
             and origin_id is not None
@@ -1097,7 +1102,7 @@ class JourneyPlanner:
 
                         existing = journey_dedup.get(line_name)
                         if existing is None or end_dt < existing[0]:
-                            score, band, expl = self._compute_reliability(legs, total_dur, conn)
+                            score, band, expl = self._compute_reliability(legs, total_dur, conn, is_adverse_weather=is_adverse_weather)
                             journey_dedup[line_name] = (end_dt, {
                                 "depart_time": start_dt.isoformat(),
                                 "arrive_time": end_dt.isoformat(),
@@ -1289,7 +1294,7 @@ class JourneyPlanner:
                             )
                             total_duration = 1
 
-                        score, band, explanation = self._compute_reliability([vehicle], total_duration, conn)
+                        score, band, explanation = self._compute_reliability([vehicle], total_duration, conn, is_adverse_weather=is_adverse_weather)
                         exact_journeys.append(
                             {
                                 "depart_time": depart_dt.isoformat(),
@@ -1346,7 +1351,7 @@ class JourneyPlanner:
                                 from_seq=rc.get("from_seq"),
                                 to_seq=rc.get("to_seq"),
                             )
-                            score, band, explanation = self._compute_reliability([vehicle], total_duration, conn)
+                            score, band, explanation = self._compute_reliability([vehicle], total_duration, conn, is_adverse_weather=is_adverse_weather)
                             rail_direct.append(
                                 {
                                     "depart_time": depart_dt.isoformat(),
@@ -1533,7 +1538,7 @@ class JourneyPlanner:
                                     if total_duration < 0:
                                         continue
 
-                                    score, band, explanation = self._compute_reliability(legs, total_duration, conn)
+                                    score, band, explanation = self._compute_reliability(legs, total_duration, conn, is_adverse_weather=is_adverse_weather)
 
                                     journeys.append(
                                         {
@@ -1711,7 +1716,7 @@ class JourneyPlanner:
                                     if saving_secs < required_saving:
                                         continue
 
-                            score, band, explanation = self._compute_reliability(cur_legs, total_duration, conn)
+                            score, band, explanation = self._compute_reliability(cur_legs, total_duration, conn, is_adverse_weather=is_adverse_weather)
                             journeys_found.append(
                                 {
                                     "depart_time": cur_legs[0]["depart"],
