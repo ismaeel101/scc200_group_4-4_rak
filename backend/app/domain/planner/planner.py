@@ -16,7 +16,13 @@ from .providers import StopInfo
 # walking constants
 WALK_MAX_METERS = 800
 WALKING_SPEED_MPS = 1.4
-WALK_TRANSFER_MAX_M = 400
+WALK_TRANSFER_MAX_M = 1200  # max walk between stops at a transfer (metres) — covers ~15 min walk
+
+# human-behaviour transfer constants
+MIN_TRANSFER_WAIT_BUS_SECS  = 120   # 2 min minimum wait after arriving by bus
+MIN_TRANSFER_WAIT_RAIL_SECS = 300   # 5 min minimum wait after arriving by train
+CHANGE_TIME_SAVING_THRESHOLD_SECS = 600   # a change must save >=10 min vs direct to justify it
+MAX_WALK_TRANSFER_SECS = int(WALK_TRANSFER_MAX_M / WALKING_SPEED_MPS)  # ~857 s ≈ 14 min walk
 
 
 class JourneyPlanner:
@@ -304,7 +310,7 @@ class JourneyPlanner:
             "to_lon": to_lon,
         }
 
-    def _vehicle_leg_dict(self, mode, from_name, to_name, depart_dt, arrive_dt, line=None, from_lat=None, from_lon=None, to_lat=None, to_lon=None):
+    def _vehicle_leg_dict(self, mode, from_name, to_name, depart_dt, arrive_dt, line=None, from_lat=None, from_lon=None, to_lat=None, to_lon=None, service_id=None, from_seq=None, to_seq=None):
         return {
             "mode": mode,
             "line": line or "",
@@ -316,6 +322,9 @@ class JourneyPlanner:
             "from_lon": from_lon,
             "to_lat": to_lat,
             "to_lon": to_lon,
+            "service_id": service_id,
+            "from_seq": from_seq,
+            "to_seq": to_seq,
         }
 
     def _get_rail_candidates_from_stop(
@@ -485,26 +494,54 @@ class JourneyPlanner:
                         "depart_dt": depart_dt,
                         "arrive_dt": arrive_dt,
                         "trip_id": row["train_uid"],
+                        "from_seq": row["seq"],
+                        "to_seq": ds["seq"],
                         "to_lat": ds_lat,
                         "to_lon": ds_lon,
                     }
                 )
 
+        # Sort by arrival time first — always prefer the train that gets there fastest,
+        # even if it departs slightly later (e.g. fast express vs slow stopper)
         candidates.sort(
             key=lambda x: (
-                x["depart_dt"],
                 x["arrive_dt"],
+                x["depart_dt"],
                 str(x["trip_id"]),
                 str(x["to_stop_id"]),
             )
         )
-        return candidates
+
+        # Deduplicate: keep only the fastest-arriving train per destination stop
+        seen_dst = {}
+        deduped = []
+        for c in candidates:
+            dst = c["to_stop_id"]
+            if dst not in seen_dst:
+                seen_dst[dst] = c
+                deduped.append(c)
+            else:
+                # Replace if this arrives earlier
+                if c["arrive_dt"] < seen_dst[dst]["arrive_dt"]:
+                    seen_dst[dst] = c
+                    deduped = [x for x in deduped if x["to_stop_id"] != dst]
+                    deduped.append(c)
+
+        deduped.sort(key=lambda x: (x["arrive_dt"], x["depart_dt"]))
+        return deduped
 
     def _journey_sort_key(self, j):
+        arrive = self._parse_iso(j.get("arrive_time")) or datetime.max
+        changes = j.get("changes", 0)
+        # Each change adds a 10-min penalty to the effective arrival time.
+        # This means a 1-change journey must arrive >10 min earlier than a
+        # direct to be ranked above it — matching human decision-making.
+        penalty = timedelta(minutes=10 * changes)
+        effective_arrive = arrive + penalty
         return (
-            self._parse_iso(j.get("arrive_time")) or datetime.max,
-            self._parse_iso(j.get("depart_time")) or datetime.max,
-            j.get("changes", 999999),
+            effective_arrive,
+            arrive,
+            changes,
             tuple(
                 (
                     leg.get("mode", ""),
@@ -737,7 +774,23 @@ class JourneyPlanner:
                     pass
                 raise NoRouteFoundError("Search timeout")
 
-        orow = self._resolve_stop(conn, origin_id)
+        # Per-call caches — keyed dicts passed to helper calls to avoid
+        # repeated SQLite queries for the same stop IDs across 5000 heap states
+        _resolve_cache: dict = {}
+        _catchment_cache: dict = {}
+
+        def _resolve(stop_id):
+            if stop_id not in _resolve_cache:
+                _resolve_cache[stop_id] = self._resolve_stop(conn, stop_id)
+            return _resolve_cache[stop_id]
+
+        def _catchment(lat, lon, meters=800):
+            key = (round(lat, 4), round(lon, 4), meters)
+            if key not in _catchment_cache:
+                _catchment_cache[key] = self._catchment_stops(conn, lat, lon, meters)
+            return _catchment_cache[key]
+
+        orow = _resolve(origin_id)
         if not orow:
             conn.close()
             raise NoRouteFoundError(
@@ -749,7 +802,7 @@ class JourneyPlanner:
         origin_lon = float(orow["lon"]) if orow["lon"] is not None else None
         origin_name = orow["name"]
 
-        drow = self._resolve_stop(conn, destination_id)
+        drow = _resolve(destination_id)
         if not drow:
             conn.close()
             raise NoRouteFoundError(
@@ -775,15 +828,302 @@ class JourneyPlanner:
             return parsed or _placeholder_dt()
 
         if origin_lat is not None and origin_lon is not None:
-            origin_catch = self._catchment_stops(conn, origin_lat, origin_lon, meters=radii[0])
+            origin_catch = _catchment(origin_lat, origin_lon, meters=radii[0])
         else:
             origin_catch = [{"id": origin_id, "name": origin_name, "lat": origin_lat, "lon": origin_lon, "distance_m": 0.0}]
         if dest_lat is not None and dest_lon is not None:
-            dest_catch = self._catchment_stops(conn, dest_lat, dest_lon, meters=radii[0])
+            dest_catch = _catchment(dest_lat, dest_lon, meters=radii[0])
         else:
             dest_catch = [{"id": destination_id, "name": dest_name, "lat": dest_lat, "lon": dest_lon, "distance_m": 0.0}]
 
         journeys = []
+
+
+        # --- Targeted bus->rail search (fast, no heap) ---
+        if use_bus and use_rail and origin_lat and origin_lon and dest_lat and dest_lon:
+            try:
+                # Look back 10 min to catch buses already in service
+                lookback_dt = requested_dt - timedelta(minutes=10)
+                dep_str = f"{lookback_dt.hour:02d}:{lookback_dt.minute:02d}:00"
+                origin_catch = _catchment(origin_lat, origin_lon, 600)
+                origin_stop_ids = [s["id"] for s in origin_catch]
+                dest_stop_ids = set(s["id"] for s in _catchment(dest_lat, dest_lon, 800))
+                dest_stop_ids.add(destination_id)
+
+                if origin_stop_ids:
+                    q = ",".join("?" * len(origin_stop_ids))
+
+                    # Query exact origin stop from requested_dt (no lookback needed here)
+                    origin_dep_str = f"{requested_dt.hour:02d}:{requested_dt.minute:02d}:00"
+                    bus_trips_origin = conn.execute("""
+                        SELECT DISTINCT st.trip_id, st.stop_id, st.sequence, st.departure_time,
+                               s.line_name
+                        FROM bus.stop_times st
+                        JOIN bus.trips t ON st.trip_id = t.id
+                        JOIN bus.services s ON t.service_id = s.id
+                        WHERE st.stop_id = ?
+                        AND st.departure_time >= ?
+                        ORDER BY st.departure_time LIMIT 60
+                    """, (origin_stop_ids[0], origin_dep_str)).fetchall()
+
+                    bus_trips_catch = conn.execute(f"""
+                        SELECT DISTINCT st.trip_id, st.stop_id, st.sequence, st.departure_time,
+                               s.line_name
+                        FROM bus.stop_times st
+                        JOIN bus.trips t ON st.trip_id = t.id
+                        JOIN bus.services s ON t.service_id = s.id
+                        WHERE st.stop_id IN ({q})
+                        AND st.departure_time >= ?
+                        ORDER BY st.departure_time LIMIT 80
+                    """, tuple(origin_stop_ids) + (dep_str,)).fetchall()
+
+                    # Merge: origin trips first, then catchment
+                    bus_trips = bus_trips_origin + [r for r in bus_trips_catch
+                                                    if r["trip_id"] not in {x["trip_id"] for x in bus_trips_origin}]
+
+                    # Build trip_ids: prioritise trips serving exact origin stop first,
+                    # then add other catchment trips sorted by departure time
+                    origin_exact_trip_ids = []
+                    seen = set()
+                    for r in sorted(bus_trips_origin, key=lambda r: (r["departure_time"], r["trip_id"])):
+                        if r["trip_id"] not in seen:
+                            seen.add(r["trip_id"])
+                            origin_exact_trip_ids.append(r["trip_id"])
+
+                    other_trip_ids = []
+                    for r in sorted(bus_trips_catch, key=lambda r: (r["departure_time"], r["trip_id"])):
+                        if r["trip_id"] not in seen:
+                            seen.add(r["trip_id"])
+                            other_trip_ids.append(r["trip_id"])
+
+                    trip_ids = (origin_exact_trip_ids + other_trip_ids)[:50]
+
+                    # Build all downstream stop IDs for these trips
+                    ph = ",".join("?" * len(trip_ids))
+                    all_stop_ids = [r["stop_id"] for r in conn.execute(
+                        f"SELECT DISTINCT stop_id FROM bus.stop_times WHERE trip_id IN ({ph})",
+                        trip_ids
+                    ).fetchall()]
+
+                    # Build rail_interchange map once
+                    rail_interchange = {}
+                    for sid in all_stop_ids:
+                        sr = _resolve(sid)
+                        if not sr or sr.get("lat") is None or sr.get("lon") is None:
+                            continue
+                        nearby = _catchment(float(sr["lat"]), float(sr["lon"]), WALK_TRANSFER_MAX_M)
+                        rail_near = [n for n in nearby
+                                    if n["id"].startswith("RAIL:") or n["id"].startswith("9100")]
+                        if rail_near:
+                            rail_interchange[sid] = rail_near
+
+                    trip_origins = {}
+                    for r in bus_trips:
+                        trip_origins.setdefault(r["trip_id"], []).append(r)
+
+                    print(f"DEBUG targeted: origin_stop_ids[0]={origin_stop_ids[0]} origin_trips={len(bus_trips_origin)} catch_trips={len(bus_trips_catch)} trip_ids={len(trip_ids)}")
+                    journey_dedup = {}  # line_name -> (arrive_dt, journey)
+
+                    for trip_id in trip_ids:
+                        o_rows = trip_origins.get(trip_id, [])
+                        if not o_rows:
+                            continue
+
+                        line_name = self._get_line_name(conn, trip_id) or o_rows[0]["line_name"]
+
+                        # Direction check: does any downstream rail-interchange stop
+                        # exist at all? If yes, the bus is going the right way.
+                        # (The 800m walk cap in best_ds loop already filters nonsense)
+                        # No expensive per-stop catchment here — just use rail_interchange.
+
+                        # Pick boarding stop: prefer exact origin stop, then closest
+                        # Try sequences from lowest to highest — first one with downstream rail is correct direction
+                        exact_origin = sorted(
+                            [r for r in o_rows if r["stop_id"] == origin_stop_ids[0]],
+                            key=lambda r: r["sequence"]
+                        )
+                        best_o = None
+                        if exact_origin:
+                            for candidate in exact_origin:
+                                # Quick check: does this boarding point have any downstream rail stop?
+                                test_ds = conn.execute("""
+                                    SELECT stop_id FROM bus.stop_times
+                                    WHERE trip_id=? AND sequence > ?
+                                    ORDER BY sequence LIMIT 30
+                                """, (trip_id, candidate["sequence"])).fetchall()
+                                if any(d["stop_id"] in rail_interchange for d in test_ds):
+                                    best_o = candidate
+                                    break
+                        if best_o is None:
+                            if exact_origin:
+                                best_o = exact_origin[0]  # fallback to lowest seq
+                            else:
+                                def _walk(r):
+                                    sr = _resolve(r["stop_id"])
+                                    if not sr or not sr.get("lat"): return 9999
+                                    return self._haversine_m(origin_lat, origin_lon,
+                                        float(sr["lat"]), float(sr["lon"]))
+                                best_o = min(o_rows, key=lambda r: (_walk(r), r["sequence"]))
+                        board_stop_id = best_o["stop_id"]
+                        board_seq = best_o["sequence"]
+
+                        # Get downstream stops
+                        downstream = conn.execute("""
+                            SELECT stop_id, sequence, departure_time
+                            FROM bus.stop_times
+                            WHERE trip_id=? AND sequence > ?
+                            ORDER BY sequence
+                        """, (trip_id, board_seq)).fetchall()
+
+                        # Find furthest downstream stop with rail nearby
+                        # Cap to 45 min of bus travel to avoid picking up wrong-city stations
+                        best_ds = None
+                        best_ds_rail = None
+                        for ds in downstream:
+                            if ds["stop_id"] not in rail_interchange:
+                                continue
+                            cand_rail = min(rail_interchange[ds["stop_id"]], key=lambda x: x["distance_m"])
+                            if cand_rail["distance_m"] > 800:
+                                continue
+                            # Bus must not travel more than 45 min from boarding stop
+                            ds_dt = _safe_parse(ds["departure_time"])
+                            board_dt_tmp = _safe_parse(best_o["departure_time"])
+                            if ds_dt and board_dt_tmp:
+                                if (ds_dt - board_dt_tmp).total_seconds() > 2700:  # 45 min
+                                    continue
+                            best_ds = ds
+                            best_ds_rail = rail_interchange[ds["stop_id"]]
+
+                        if not best_ds or not best_ds_rail:
+                            if line_name in ('100', '1', '41', '42'):
+                                print(f"DEBUG {line_name} {trip_id[:12]}: no best_ds, board={board_stop_id} seq={board_seq}, downstream rail stops: {[d['stop_id'] for d in downstream if d['stop_id'] in rail_interchange][:3]}")
+                            continue
+
+                        board_r = _resolve(board_stop_id)
+                        ds_r = _resolve(best_ds["stop_id"])
+                        if not board_r or not ds_r:
+                            continue
+
+                        depart_dt = _safe_parse(best_o["departure_time"])
+                        bus_arr = _safe_parse(best_ds["departure_time"])
+                        if not depart_dt or not bus_arr or bus_arr <= depart_dt:
+                            continue
+                        # Human gate: bus must travel at least 1 minute before alighting
+                        if (bus_arr - depart_dt).total_seconds() < 60:
+                            continue
+
+                        # Use closest rail stop
+                        rail_stop = min(best_ds_rail, key=lambda x: x["distance_m"])
+                        walk_m = rail_stop["distance_m"]
+                        walk_secs = walk_m / WALKING_SPEED_MPS
+                        rail_arr = (bus_arr + timedelta(seconds=walk_secs)).replace(microsecond=0)
+                        board_rail_dt = rail_arr + timedelta(seconds=MIN_TRANSFER_WAIT_RAIL_SECS)
+
+                        rail_cands = self._get_rail_candidates_from_stop(
+                            conn=conn, stop_id=rail_stop["id"],
+                            current_time=board_rail_dt, requested_dt=requested_dt,
+                            downstream_limit=20,
+                        )
+                        best_rc = None
+                        for rc in rail_cands:
+                            if rc["to_stop_id"] not in dest_stop_ids:
+                                continue
+                            # Train must depart after requested_dt (user's desired departure)
+                            if rc["depart_dt"] < requested_dt:
+                                continue
+                            if best_rc is None or rc["arrive_dt"] < best_rc["arrive_dt"]:
+                                best_rc = rc
+
+                        if not best_rc:
+                            continue
+
+                        # Build legs
+                        legs = []
+                        o_name = board_r["name"]
+                        ds_name = ds_r["name"]
+
+                        walk_to_stop = self._haversine_m(
+                            origin_lat, origin_lon,
+                            float(board_r.get("lat") or 0), float(board_r.get("lon") or 0)
+                        )
+                        if walk_to_stop > 50:
+                            ws = walk_to_stop / WALKING_SPEED_MPS
+                            walk_depart = (depart_dt - timedelta(seconds=ws)).replace(microsecond=0)
+                            legs.append(self._walk_leg_dict(
+                                origin_name, o_name,
+                                walk_depart, depart_dt,
+                                from_lat=origin_lat, from_lon=origin_lon,
+                                to_lat=float(board_r["lat"]), to_lon=float(board_r["lon"])
+                            ))
+
+                        legs.append(self._vehicle_leg_dict(
+                            "bus", o_name, ds_name, depart_dt, bus_arr,
+                            line=line_name,
+                            from_lat=float(board_r.get("lat") or 0),
+                            from_lon=float(board_r.get("lon") or 0),
+                            to_lat=float(ds_r["lat"]), to_lon=float(ds_r["lon"]),
+                            service_id=trip_id,
+                        ))
+
+                        if walk_m > 30:
+                            legs.append(self._walk_leg_dict(
+                                ds_name, rail_stop["name"],
+                                bus_arr, rail_arr,
+                                from_lat=float(ds_r["lat"]), from_lon=float(ds_r["lon"]),
+                                to_lat=rail_stop["lat"], to_lon=rail_stop["lon"]
+                            ))
+
+                        legs.append(self._vehicle_leg_dict(
+                            "rail", rail_stop["name"], best_rc["to_stop_name"],
+                            best_rc["depart_dt"], best_rc["arrive_dt"],
+                            line=best_rc.get("trip_id"),
+                            from_lat=rail_stop["lat"], from_lon=rail_stop["lon"],
+                            to_lat=best_rc.get("to_lat"), to_lon=best_rc.get("to_lon"),
+                            service_id=best_rc.get("trip_id"),
+                            from_seq=best_rc.get("from_seq"), to_seq=best_rc.get("to_seq"),
+                        ))
+
+                        start_dt = self._parse_iso(legs[0]["depart"])
+                        end_dt = self._parse_iso(legs[-1]["arrive"])
+                        if not start_dt or not end_dt or end_dt <= start_dt:
+                            continue
+                        total_dur = int((end_dt - start_dt).total_seconds() / 60)
+                        total_walk_s = sum(
+                            max(0, (self._parse_iso(l["arrive"]) - self._parse_iso(l["depart"])).total_seconds())
+                            for l in legs if l.get("mode") == "walk"
+                        )
+                        if total_walk_s > 900:
+                            continue
+
+                        existing = journey_dedup.get(line_name)
+                        if existing is None or end_dt < existing[0]:
+                            score, band, expl = self._compute_reliability(legs, total_dur, conn)
+                            journey_dedup[line_name] = (end_dt, {
+                                "depart_time": start_dt.isoformat(),
+                                "arrive_time": end_dt.isoformat(),
+                                "total_duration_min": total_dur,
+                                "changes": 1,
+                                "total_walk_minutes": int(total_walk_s / 60),
+                                "reliability_score": score,
+                                "reliability_band": band,
+                                "reliability_explanation": expl,
+                                "legs": legs,
+                            })
+
+                    all_found = sorted(
+                        [v[1] for v in journey_dedup.values()],
+                        key=lambda j: self._parse_iso(j["arrive_time"]) or datetime.max
+                    )
+                    print(f"DEBUG targeted: journey_dedup keys={list(journey_dedup.keys())} all_found={len(all_found)}")
+                    if all_found:
+                        best_arr = self._parse_iso(all_found[0]["arrive_time"])
+                        all_found = [j for j in all_found
+                                    if not best_arr or
+                                    (self._parse_iso(j["arrive_time"]) or datetime.max)
+                                    <= best_arr + timedelta(minutes=15)]
+                    journeys.extend(all_found[:max_options])
+            except Exception:
+                pass
 
         for wh in window_hours_attempts:
             enforce_window = wh is not None
@@ -804,20 +1144,15 @@ class JourneyPlanner:
                         if use_bus:
                             cur_local = conn.execute(
                                 """
-                                SELECT departure_time
-                                FROM bus.stop_times
+                                SELECT 1 FROM bus.stop_times
                                 WHERE stop_id=?
                                 AND departure_time >= ?
-                                ORDER BY departure_time
-                                LIMIT 200
+                                LIMIT 1
                                 """,
                                 (stop_id, f"{window_start.hour:02d}:{window_start.minute:02d}:00"),
                             )
-                        
-                            for r in cur_local.fetchall():
-                                depart_dt = self._parse_time_to_dt(r[0], requested_dt)
-                                if self._window_contains(depart_dt, window_start, window_end):
-                                    return True
+                            if cur_local.fetchone() is not None:
+                                return True
 
                         if use_rail:
                             tiploc = None
@@ -930,6 +1265,9 @@ class JourneyPlanner:
                             from_lon=origin_lon,
                             to_lat=dest_lat,
                             to_lon=dest_lon,
+                            service_id=trip,
+                            from_seq=o_seq,
+                            to_seq=dest_seq,
                         )
                         total_duration = int((arrive_dt - depart_dt).total_seconds() / 60)
                         if total_duration <= 0 and (dest_seq - o_seq) > 0:
@@ -945,6 +1283,9 @@ class JourneyPlanner:
                                 from_lon=origin_lon,
                                 to_lat=dest_lat,
                                 to_lon=dest_lon,
+                                service_id=trip,
+                                from_seq=o_seq,
+                                to_seq=dest_seq,
                             )
                             total_duration = 1
 
@@ -955,17 +1296,13 @@ class JourneyPlanner:
                                 "arrive_time": arrive_dt.isoformat(),
                                 "total_duration_min": total_duration,
                                 "changes": 0,
+                                "total_walk_minutes": 0,
                                 "reliability_score": score,
                                 "reliability_band": band,
                                 "reliability_explanation": explanation,
                                 "legs": [vehicle],
                             }
                         )
-                        
-                        if len(exact_journeys) >= max_options:
-                            selected = self._select_distinct_journeys(exact_journeys, max_options)
-                            conn.close()
-                            return selected
                     
             except NoRouteFoundError:
                 pass
@@ -985,7 +1322,7 @@ class JourneyPlanner:
                         downstream_limit=15,
                     )
                     rail_direct = []
-                    dest_catch_local = self._catchment_stops(conn, dest_lat, dest_lon, meters=500)
+                    dest_catch_local = _catchment(dest_lat, dest_lon, meters=500)
                     dest_ids_local = set(s["id"] for s in dest_catch_local)
                     for rc in rail_candidates:
                         if rc["to_stop_id"] in dest_ids_local or rc["to_stop_id"] == destination_id:
@@ -1005,6 +1342,9 @@ class JourneyPlanner:
                                 from_lon=origin_lon,
                                 to_lat=rc.get("to_lat"),
                                 to_lon=rc.get("to_lon"),
+                                service_id=rc.get("trip_id"),
+                                from_seq=rc.get("from_seq"),
+                                to_seq=rc.get("to_seq"),
                             )
                             score, band, explanation = self._compute_reliability([vehicle], total_duration, conn)
                             rail_direct.append(
@@ -1020,18 +1360,22 @@ class JourneyPlanner:
                                 }
                             )
                     if rail_direct:
-                        selected = self._select_distinct_journeys(rail_direct, max_options)
-                        conn.close()
-                        return selected
+                        journeys.extend(rail_direct)
                 except NoRouteFoundError:
                     pass
                 except Exception:
                     pass
 
-            if not (origin_exact_usable and dest_exact_usable and exact_journeys):
+            # Always add direct journeys first
+            journeys.extend(exact_journeys)
+
+
+            # Only run heap-based multi-leg if we still need more options
+            # Skip heap for mixed mode — targeted bus->rail search handles it faster
+            if len(journeys) < max_options and not (use_bus and use_rail):
                 for radius in radii:
-                    origin_catch = self._catchment_stops(conn, origin_lat, origin_lon, meters=radius)
-                    dest_catch = self._catchment_stops(conn, dest_lat, dest_lon, meters=radius)
+                    origin_catch = _catchment(origin_lat, origin_lon, meters=radius)
+                    dest_catch = _catchment(dest_lat, dest_lon, meters=radius)
 
                     if not origin_catch or not dest_catch:
                         continue
@@ -1083,8 +1427,8 @@ class JourneyPlanner:
                                     depart_dt = _safe_parse(o["departure_time"])
                                     arrive_dt = _safe_parse(dr["departure_time"])
 
-                                    orig_stop_row = self._resolve_stop(conn, o_stop)
-                                    dest_stop_row = self._resolve_stop(conn, d_stop)
+                                    orig_stop_row = _resolve(o_stop)
+                                    dest_stop_row = _resolve(d_stop)
 
                                     walk1_m = 0
                                     walk2_m = 0
@@ -1155,6 +1499,9 @@ class JourneyPlanner:
                                             from_lon=o_lon,
                                             to_lat=d_lat,
                                             to_lon=d_lon,
+                                            service_id=trip_id,
+                                            from_seq=o_seq,
+                                            to_seq=dr["sequence"],
                                         )
                                     )
 
@@ -1246,7 +1593,7 @@ class JourneyPlanner:
                                 enforce_window=enforce_window,
                                 window_start=window_start,
                                 window_end=window_end,
-                                downstream_limit=1,
+                                downstream_limit=15,
                             )
                             for rc in rail_candidates:
                                 origin_candidates.append(
@@ -1261,11 +1608,12 @@ class JourneyPlanner:
                                 )
 
                     origin_candidates.sort(key=lambda x: (x[0], str(x[1]["stop_id"]), x[2]))
-                    origin_candidates = origin_candidates[:50]
+                    seed_cap = 20 if journeys else 50
+                    origin_candidates = origin_candidates[:seed_cap]
 
-                    MAX_STATES = 1500
-                    MAX_VEHICLE_LEGS = 3
-                    DOWNSTREAM_LIMIT = 6
+                    MAX_STATES = 5000
+                    MAX_VEHICLE_LEGS = 3      # hard cap: never suggest more than 3 changes
+                    DOWNSTREAM_LIMIT = 10
 
                     journeys_found = []
                     explored_states = 0
@@ -1278,7 +1626,7 @@ class JourneyPlanner:
                         legs = []
 
                         if not origin_exact_usable and start_stop != origin_id:
-                            sr = self._resolve_stop(conn, start_stop)
+                            sr = _resolve(start_stop)
                             if sr:
                                 nm = sr["name"]
                                 try:
@@ -1335,13 +1683,42 @@ class JourneyPlanner:
                             if total_duration < 0:
                                 continue
 
+                            n_vehicle = len([l for l in cur_legs if l.get("mode") != "walk"])
+                            n_changes = max(0, n_vehicle - 1)
+
+                            # Human-behaviour gate: count total walk time across all walk legs
+                            total_walk_secs = sum(
+                                max(0, (
+                                    self._parse_iso(l["arrive"]) - self._parse_iso(l["depart"])
+                                ).total_seconds())
+                                for l in cur_legs if l.get("mode") == "walk"
+                            )
+                            # Reject if total walking exceeds 15 minutes — nobody wants a 20-min walk as part of a transit journey
+                            if total_walk_secs > 900:
+                                continue
+
+                            # Reject if a change is present but saves less than 10 min per change vs best known direct
+                            if n_changes > 0 and journeys:
+                                best_direct = min(
+                                    (j for j in journeys if j.get("changes", 0) == 0),
+                                    key=lambda j: self._parse_iso(j.get("arrive_time")) or datetime.max,
+                                    default=None,
+                                )
+                                if best_direct:
+                                    best_direct_arrive = self._parse_iso(best_direct.get("arrive_time"))
+                                    saving_secs = (best_direct_arrive - end_dt).total_seconds() if best_direct_arrive else 0
+                                    required_saving = CHANGE_TIME_SAVING_THRESHOLD_SECS * n_changes
+                                    if saving_secs < required_saving:
+                                        continue
+
                             score, band, explanation = self._compute_reliability(cur_legs, total_duration, conn)
                             journeys_found.append(
                                 {
                                     "depart_time": cur_legs[0]["depart"],
                                     "arrive_time": cur_legs[-1]["arrive"],
                                     "total_duration_min": total_duration,
-                                    "changes": max(0, len([l for l in cur_legs if l.get("mode") != "walk"]) - 1),
+                                    "changes": n_changes,
+                                    "total_walk_minutes": int(total_walk_secs / 60),
                                     "reliability_score": score,
                                     "reliability_band": band,
                                     "reliability_explanation": explanation,
@@ -1350,7 +1727,7 @@ class JourneyPlanner:
                             )
                             continue
 
-                        cur_stop_resolved = self._resolve_stop(conn, cur_stop)
+                        cur_stop_resolved = _resolve(cur_stop)
                         if not cur_stop_resolved:
                             continue
 
@@ -1364,14 +1741,14 @@ class JourneyPlanner:
                         except Exception:
                             cur_lon = None
 
-                        if vehicle_legs <= 1 and len(cur_legs) < (MAX_VEHICLE_LEGS * 2):
+                        if vehicle_legs < MAX_VEHICLE_LEGS and len(cur_legs) < (MAX_VEHICLE_LEGS * 2):
                             is_rail_stop = (
                                 isinstance(cur_stop, str)
                                 and (cur_stop.startswith("RAIL:") or cur_stop.startswith("9100"))
                             )
                             nearby = []
-                            if not is_rail_stop or vehicle_legs == 0:
-                                nearby = self._catchment_stops(conn, cur_lat, cur_lon, meters=WALK_TRANSFER_MAX_M)
+                            if (not is_rail_stop or vehicle_legs == 0) and cur_lat is not None and cur_lon is not None:
+                                nearby = _catchment(cur_lat, cur_lon, meters=WALK_TRANSFER_MAX_M)
                             nearby.sort(key=lambda x: (x["distance_m"], x["id"]))
                             expanded = 0
                             for nb in nearby:
@@ -1421,14 +1798,22 @@ class JourneyPlanner:
                                 """,
                                 (cur_stop,),
                             )
+                            # Minimum wait before boarding: 0 for first leg, 2 min for a transfer
+                            min_board_wait = timedelta(seconds=MIN_TRANSFER_WAIT_BUS_SECS if vehicle_legs > 0 else 0)
+                            # Only process the first 20 valid departures — enough to find next buses
+                            # without flooding the heap with every service of the day
+                            bus_rows_processed = 0
                             for row in cur_out.fetchall():
+                                if bus_rows_processed >= 20:
+                                    break
                                 depart_dt = self._parse_time_to_dt(row["departure_time"], requested_dt)
                                 if not depart_dt:
                                     continue
-                                if depart_dt < cur_time:
+                                if depart_dt < cur_time + min_board_wait:
                                     continue
                                 if enforce_window and not self._window_contains(depart_dt, window_start, window_end):
                                     continue
+                                bus_rows_processed += 1
 
                                 cur_ds = conn.execute(
                                     """
@@ -1453,7 +1838,7 @@ class JourneyPlanner:
                                     if (arrive_dt - depart_dt).total_seconds() < 60:
                                         continue
 
-                                    ds_resolved = self._resolve_stop(conn, ds_id)
+                                    ds_resolved = _resolve(ds_id)
                                     ds_name = ds_resolved["name"] if ds_resolved else ds_id
 
                                     try:
@@ -1464,15 +1849,19 @@ class JourneyPlanner:
                                         ds_lon = None
 
                                     allow_expand = True
-                                    if (
-                                        dest_lat is not None and dest_lon is not None
-                                        and cur_lat is not None and cur_lon is not None
-                                        and ds_lat is not None and ds_lon is not None
-                                    ):
-                                        cur_dist = self._haversine_m(cur_lat, cur_lon, dest_lat, dest_lon)
-                                        ds_dist = self._haversine_m(ds_lat, ds_lon, dest_lat, dest_lon)
-                                        if ds_dist > cur_dist + 2000:
-                                            allow_expand = False
+                                    # Only prune if this is NOT the first leg and we've already
+                                    # used a rail leg — a bus to a rail station may go away from
+                                    # the destination before the train brings you back south
+                                    if vehicle_legs > 0 and last_vehicle_mode == "bus":
+                                        if (
+                                            dest_lat is not None and dest_lon is not None
+                                            and cur_lat is not None and cur_lon is not None
+                                            and ds_lat is not None and ds_lon is not None
+                                        ):
+                                            cur_dist = self._haversine_m(cur_lat, cur_lon, dest_lat, dest_lon)
+                                            ds_dist = self._haversine_m(ds_lat, ds_lon, dest_lat, dest_lon)
+                                            if ds_dist > cur_dist + 5000:
+                                                allow_expand = False
 
                                     if not allow_expand:
                                         continue
@@ -1490,6 +1879,9 @@ class JourneyPlanner:
                                         from_lon=cur_lon,
                                         to_lat=ds_lat,
                                         to_lon=ds_lon,
+                                        service_id=row["trip_id"],
+                                        from_seq=row["sequence"],
+                                        to_seq=ds["sequence"],
                                     )
                                     legs_new = cur_legs + [leg]
                                     new_vehicle_legs = vehicle_legs + 1
@@ -1509,16 +1901,26 @@ class JourneyPlanner:
                                     counter += 1
 
                         if use_rail:
+                            # For a transfer (not the first leg), require 5 min buffer before boarding a train
+                            rail_min_wait = timedelta(seconds=MIN_TRANSFER_WAIT_RAIL_SECS if vehicle_legs > 0 else 0)
                             rail_candidates = self._get_rail_candidates_from_stop(
                                 conn=conn,
                                 stop_id=cur_stop,
-                                current_time=cur_time,
+                                current_time=cur_time + rail_min_wait,
                                 requested_dt=requested_dt,
                                 enforce_window=enforce_window,
                                 window_start=window_start,
                                 window_end=window_end,
                                 downstream_limit=DOWNSTREAM_LIMIT,
                             )
+                            # Deduplicate: keep only the earliest departure per destination stop
+                            # to avoid 100+ candidates for the same journey flooding the heap
+                            seen_rail_dst = {}
+                            for rc in rail_candidates:
+                                key = rc["to_stop_id"]
+                                if key not in seen_rail_dst:
+                                    seen_rail_dst[key] = rc
+                            rail_candidates = sorted(seen_rail_dst.values(), key=lambda x: x["depart_dt"])[:15]
 
                             for rc in rail_candidates:
                                 ds_id = rc["to_stop_id"]
@@ -1555,6 +1957,9 @@ class JourneyPlanner:
                                     from_lon=cur_lon,
                                     to_lat=ds_lat,
                                     to_lon=ds_lon,
+                                    service_id=rc.get("trip_id"),
+                                    from_seq=rc.get("from_seq"),
+                                    to_seq=rc.get("to_seq"),
                                 )
                                 legs_new = cur_legs + [leg]
                                 new_vehicle_legs = vehicle_legs + 1
@@ -1578,11 +1983,12 @@ class JourneyPlanner:
                 if len(journeys) >= max_options:
                     break
 
+        # --- Targeted bus->rail search (outside window loop, runs once) ---
         conn.close()
 
         if not journeys:
             try:
-                print(f"DEBUG: searched {explored_states if 'explored_states' in locals() else 'unknown'} states, no route found")
+                print(f"DEBUG: no route found")
             except Exception:
                 pass
             raise NoRouteFoundError(f"No routes found between {origin_id} and {destination_id}")
@@ -1621,8 +2027,10 @@ class JourneyPlanner:
                 start_dt = self._parse_iso(j.get("depart_time"))
                 end_dt = self._parse_iso(j.get("arrive_time"))
                 if start_dt is None or end_dt is None:
+                    print(f"DEBUG GOOD: skip - start/end None")
                     continue
                 if end_dt < start_dt:
+                    print(f"DEBUG GOOD: skip - end<start {start_dt} {end_dt}")
                     continue
 
                 total = int(j.get("total_duration_min", 0))
@@ -1634,9 +2042,11 @@ class JourneyPlanner:
                     ldep = self._parse_iso(leg.get("depart"))
                     larr = self._parse_iso(leg.get("arrive"))
                     if ldep is None or larr is None or larr < ldep:
+                        print(f"DEBUG GOOD: skip - leg time invalid {leg.get('mode')} {ldep} {larr}")
                         valid_legs = False
                         break
                     if ldep < prev_arr:
+                        print(f"DEBUG GOOD: skip - leg overlap {leg.get('mode')} ldep={ldep} prev_arr={prev_arr}")
                         valid_legs = False
                         break
 
@@ -1647,9 +2057,11 @@ class JourneyPlanner:
 
                     if leg.get("mode") in ("bus", "rail"):
                         if dur_secs < 60:
+                            print(f"DEBUG GOOD: skip - leg too short {leg.get('mode')} {dur_secs}s")
                             valid_legs = False
                             break
                         if leg.get("from") == leg.get("to"):
+                            print(f"DEBUG GOOD: skip - from==to {leg.get('from')}")
                             valid_legs = False
                             break
 
@@ -1659,18 +2071,31 @@ class JourneyPlanner:
                 if not valid_legs:
                     continue
                 if total <= 0 and leg_sum > 0:
+                    print(f"DEBUG GOOD: skip - total={total} leg_sum={leg_sum}")
                     continue
                 if abs(total - leg_sum) > 2:
                     j["total_duration_min"] = leg_sum
                 good.append(j)
-            except Exception:
+            except Exception as ex:
+                print(f"DEBUG GOOD: exception {ex}")
                 continue
 
         if time_type == "depart_at":
+            def _first_vehicle_depart(jj):
+                # For mixed bus+rail journeys, use the rail leg departure
+                # since the bus may have departed before requested_dt
+                legs = jj.get("legs", [])
+                rail_legs = [l for l in legs if l.get("mode") == "rail"]
+                if rail_legs:
+                    return self._parse_iso(rail_legs[0].get("depart"))
+                for leg in legs:
+                    if leg.get("mode") == "bus":
+                        return self._parse_iso(leg.get("depart"))
+                return self._parse_iso(jj.get("depart_time"))
+
             later = [
                 jj for jj in good
-                if self._parse_iso(jj.get("depart_time"))
-                and self._parse_iso(jj.get("depart_time")) >= requested_dt
+                if _first_vehicle_depart(jj) and _first_vehicle_depart(jj) >= requested_dt
             ]
             if later:
                 later.sort(key=self._journey_sort_key)

@@ -153,6 +153,9 @@ class Leg(BaseModel):
     live_status: Optional[LiveStatus] = None
     leg_risk_band: Optional[Literal["High", "Medium", "Low"]] = None
     risk_explanation: Optional[List[str]] = None
+    service_id: Optional[str] = None
+    from_seq: Optional[int] = None
+    to_seq: Optional[int] = None
 
 
 class Journey(BaseModel):
@@ -218,6 +221,9 @@ def _parse_leg(raw) -> dict:
             "live_status": _parse_live_status(raw.get("live_status")),
             "leg_risk_band": raw.get("leg_risk_band"),
             "risk_explanation": raw.get("risk_explanation"),
+            "service_id": raw.get("service_id"),
+            "from_seq": raw.get("from_seq"),
+            "to_seq": raw.get("to_seq"),
         }
 
     return {
@@ -232,6 +238,8 @@ def _parse_leg(raw) -> dict:
         "to_lon": getattr(raw, "to_lon", None),
         "operator": getattr(raw, "operator", None),
         "service_id": getattr(raw, "service_id", None),
+        "from_seq": getattr(raw, "from_seq", None),
+        "to_seq": getattr(raw, "to_seq", None),
         "live_status": _parse_live_status(getattr(raw, "live_status", None)),
         "leg_risk_band": getattr(raw, "leg_risk_band", None),
         "risk_explanation": getattr(raw, "risk_explanation", None),
@@ -461,13 +469,17 @@ async def get_stops(
 
         results: list[dict] = []
         seen_ids: set[str] = set()
+        NW_PREFIXES = ('2500', '2580', '2590', '2800', '0600', '0610', '0680', '0690', '3200', 'RAIL', '9100', '9400', '4500', '5110', '5120')
+
+        # Apply NW prefix filter to both databases
+        nw_filter = " AND (" + " OR ".join(f"atco_code LIKE '{p}%'" for p in NW_PREFIXES) + ")"
 
         cur = conn.execute(
-            """
+            f"""
             SELECT atco_code AS id, common_name AS name, latitude AS lat, longitude AS lon,
                    CASE WHEN stop_type IN ('RLY', 'RSE', 'TMU', 'MET') THEN 'rail' ELSE 'bus' END as type
             FROM stops
-            WHERE common_name LIKE ?
+            WHERE common_name LIKE ?{nw_filter}
             LIMIT ?
             """,
             (f"%{query}%", limit),
@@ -477,12 +489,13 @@ async def get_stops(
             results.append(d)
             seen_ids.add(d["id"])
 
+        # bus.db may contain national stops — filter to NW only
         try:
             cur2 = conn.execute(
-                """
+                f"""
                 SELECT atco_code AS id, common_name AS name, latitude AS lat, longitude AS lon, 'bus' as type
                 FROM bus.bus_stops
-                WHERE common_name LIKE ?
+                WHERE common_name LIKE ?{nw_filter}
                 LIMIT ?
                 """,
                 (f"%{query}%", limit),
@@ -500,6 +513,105 @@ async def get_stops(
         return results[:limit]
     except HTTPException:
         raise
+    except sqlite3.DatabaseError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+
+@app.get("/api/leg-stops", tags=["Routing"], dependencies=[Depends(rate_limiter)])
+async def get_leg_stops(
+    service_id: str = Query(..., description="Trip ID (bus trip_id or rail train_uid)"),
+    mode: Literal["bus", "rail"] = Query(..., description="Transport mode"),
+    from_seq: int = Query(..., description="Origin stop sequence number"),
+    to_seq: int = Query(..., description="Destination stop sequence number"),
+):
+    """Return intermediate stops between from_seq and to_seq for a given trip."""
+    stops_db = _find_db_path("stops.db", "optiroute.db")
+    if not stops_db:
+        raise HTTPException(status_code=503, detail="Database file not found")
+
+    conn = sqlite3.connect(str(stops_db))
+    conn.row_factory = sqlite3.Row
+
+    bus_db = _find_db_path("bus.db", "database1.db")
+    rail_db = _find_db_path("rail.db")
+
+    if bus_db:
+        try:
+            conn.execute(f"ATTACH DATABASE '{bus_db}' AS bus")
+        except Exception:
+            pass
+    if rail_db:
+        try:
+            conn.execute(f"ATTACH DATABASE '{rail_db}' AS rail")
+        except Exception:
+            pass
+
+    try:
+        intermediate = []
+        if mode == "bus":
+            rows = conn.execute(
+                """
+                SELECT st.stop_id, st.sequence, st.arrival_time, st.departure_time
+                FROM bus.stop_times st
+                WHERE st.trip_id = ? AND st.sequence > ? AND st.sequence < ?
+                ORDER BY st.sequence
+                """,
+                (service_id, from_seq, to_seq),
+            ).fetchall()
+            for r in rows:
+                stop_id = r["stop_id"]
+                name_row = None
+                try:
+                    name_row = conn.execute(
+                        "SELECT common_name FROM stops WHERE atco_code=? LIMIT 1", (stop_id,)
+                    ).fetchone()
+                except Exception:
+                    pass
+                if not name_row:
+                    try:
+                        name_row = conn.execute(
+                            "SELECT common_name FROM bus.bus_stops WHERE atco_code=? LIMIT 1", (stop_id,)
+                        ).fetchone()
+                    except Exception:
+                        pass
+                name = name_row["common_name"] if name_row else stop_id
+                intermediate.append({
+                    "name": name,
+                    "arrival_time": r["arrival_time"],
+                    "departure_time": r["departure_time"],
+                    "sequence": r["sequence"],
+                })
+        elif mode == "rail":
+            rows = conn.execute(
+                """
+                SELECT s.tiploc, s.seq, s.arrival, s.departure
+                FROM rail.schedules s
+                WHERE s.train_uid = ? AND s.seq > ? AND s.seq < ?
+                ORDER BY s.seq
+                """,
+                (service_id, from_seq, to_seq),
+            ).fetchall()
+            for r in rows:
+                tiploc = r["tiploc"]
+                name_row = conn.execute(
+                    """
+                    SELECT common_name FROM stops
+                    WHERE atco_code IN (?, ?) OR crs_code=?
+                    LIMIT 1
+                    """,
+                    (f"RAIL:{tiploc}", f"9100{tiploc}", tiploc),
+                ).fetchone()
+                name = name_row["common_name"] if name_row else tiploc
+                intermediate.append({
+                    "name": name,
+                    "arrival_time": r["arrival"],
+                    "departure_time": r["departure"],
+                    "sequence": r["seq"],
+                })
+
+        return {"stops": intermediate}
     except sqlite3.DatabaseError as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
