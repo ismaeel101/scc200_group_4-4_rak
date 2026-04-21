@@ -17,11 +17,11 @@ __pycache__/
 
 # databases
 *.db
+*.db-shm
+*.db-wal
 
 # temp
 /tmp/
 
 # OS
-.DS_Store*.db
-*.db-shm
-*.db-wal
+.DS_Store
