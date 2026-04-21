@@ -663,6 +663,16 @@ async def plan_journey(
 
     journeys = [_parse_journey(j) for j in raw_journeys]
 
+    # Attach fetched weather data (and adverse flag) to parsed journeys so
+    # the reliability pipeline can use the same weather source as the planner.
+    try:
+        for j in journeys:
+            # keep a minimal boolean and the full weather dict when available
+            j["is_adverse_weather"] = bool(is_adverse)
+            j["weather"] = weather_data if isinstance(weather_data, dict) else None
+    except Exception:
+        pass
+
     try:
         annotated_journeys, flags = decision_support.annotate(journeys)
         annotated_journeys = [_parse_journey(j) for j in annotated_journeys]
