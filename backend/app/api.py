@@ -11,6 +11,7 @@ from pathlib import Path
 from app.data.stops import StopService
 from app.domain.planner.planner import JourneyPlanner
 from app.domain.decision_support.decision_support import DecisionSupport
+import os
 from app.cache.cache_service import CacheService
 from app.domain.weather import fetch_weather
 
@@ -273,7 +274,8 @@ def get_journey_planner() -> JourneyPlanner:
 
 
 def get_decision_support() -> DecisionSupport:
-    return DecisionSupport()
+    enabled = os.environ.get("ENABLE_DECISION_SUPPORT", "true").lower() in ("1", "true", "yes")
+    return DecisionSupport(enabled=enabled)
 
 
 def get_cache_service() -> CacheService:
