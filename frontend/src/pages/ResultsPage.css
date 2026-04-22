@@ -527,6 +527,50 @@
   margin-top: 6px;
 }
 
+.reliability-score {
+  font-size: 14px;
+  font-weight: 700;
+  color: #0f172a;
+  margin-top: 8px;
+}
+
+.tickets-cta-panel {
+  width: 100%;
+  text-align: left;
+  background: #e8f1ff;
+  border-left: 5px solid #2563eb;
+  border-top: none;
+  border-right: none;
+  border-bottom: none;
+  padding: 10px 14px;
+  border-radius: 12px;
+  margin-top: 10px;
+  cursor: pointer;
+  transition: transform 0.15s ease, filter 0.15s ease, box-shadow 0.15s ease;
+}
+
+.tickets-cta-panel:hover {
+  filter: brightness(0.97);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(30, 64, 175, 0.12);
+}
+
+.tickets-cta-panel:active {
+  transform: translateY(0);
+}
+
+.tickets-cta-title {
+  font-weight: 700;
+  font-size: 17px;
+  color: #1e40af;
+}
+
+.tickets-cta-body {
+  font-size: 15px;
+  color: #1e3a8a;
+  margin-top: 6px;
+}
+
 
 @media (max-width: 960px) {
   .resultspage__grid {

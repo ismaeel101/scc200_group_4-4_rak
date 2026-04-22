@@ -1,6 +1,6 @@
 
 import React, { useState, useMemo, useEffect, useCallback } from "react";
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import "./ResultsPage.css";
 import translations from '../translations';
 import { useUi } from '../contexts/UiContext';
@@ -8,8 +8,10 @@ import { Train, Bus, Clock, ArrowRight, ChevronDown, ChevronUp, MapPin } from "l
 import { Journey } from '../types/journey';
 import { formatTime } from '../utils/formatTime';
 import RouteMap from '../components/RouteMap';
+import WeatherWidget from '../components/WeatherWidget';
 
 const ResultsPage: React.FC = () => {
+  const navigate = useNavigate();
   const { language } = useUi();
   const t = translations[language.code] || translations.en;
   const journeyResultsLabel = typeof t.journeyResults === 'string' ? t.journeyResults : 'Journey results';
@@ -124,6 +126,18 @@ const ResultsPage: React.FC = () => {
     })
     : [];
 
+  const weatherCoords = useMemo(() => {
+    const firstLeg = Array.isArray(activeLegs) && activeLegs.length > 0 ? activeLegs[0] : null;
+    const latCandidates = [firstLeg?.from_lat, firstLeg?.to_lat, 54.1];
+    const lonCandidates = [firstLeg?.from_lon, firstLeg?.to_lon, -2.5];
+    const lat = latCandidates.map((v: any) => Number(v)).find((n) => Number.isFinite(n));
+    const lon = lonCandidates.map((v: any) => Number(v)).find((n) => Number.isFinite(n));
+    return {
+      lat: Number.isFinite(lat as number) ? (lat as number) : 54.1,
+      lon: Number.isFinite(lon as number) ? (lon as number) : -2.5,
+    };
+  }, [activeLegs]);
+
   // Intermediate stops state: keyed by leg index
   const [expandedLegs, setExpandedLegs] = useState<Record<number, boolean>>({});
   const [legStops, setLegStops] = useState<Record<number, { name: string; arrival_time: string; departure_time: string }[]>>({});
@@ -169,6 +183,12 @@ const ResultsPage: React.FC = () => {
   const reliabilityClass = (j: any) => {
     const label = reliabilityText(j).toLowerCase();
     return label || 'unknown';
+  };
+  const reliabilityScore = (j: any): number | null => {
+    if (!j) return null;
+    const raw = j.reliability_score ?? j.reliabilityScore ?? null;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : null;
   };
 
   return (
@@ -237,6 +257,11 @@ const ResultsPage: React.FC = () => {
           </aside>
 
           <main className="resultspage__right">
+            <section className="card weather-card">
+              <h3 className="card__title">Weather</h3>
+              <WeatherWidget lat={weatherCoords.lat} lon={weatherCoords.lon} />
+            </section>
+
             <section className="card map-card">
               <h3 className="card__title">{routeMapLabel}</h3>
               <div className="map-placeholder" role="region" aria-label={routeMapLabel}>
@@ -347,7 +372,22 @@ const ResultsPage: React.FC = () => {
                     <div className="reliability-body">{
                       (((selectedJourney as any)?.reliability_band || (selectedJourney as any)?.reliability) === 'High') ? reliabilityHighMsg : (((selectedJourney as any)?.reliability_band || (selectedJourney as any)?.reliability) === 'Medium') ? reliabilityMediumMsg : reliabilityLowMsg
                     }</div>
+                    {reliabilityScore(selectedJourney) !== null && (
+                      <div className="reliability-score">Score: {reliabilityScore(selectedJourney)}/100</div>
+                    )}
                   </div>
+                </section>
+
+                <section className="card reliability-card">
+                  <button
+                    type="button"
+                    className="tickets-cta-panel"
+                    onClick={() => navigate('/tickets')}
+                    aria-label="Buy tickets here"
+                  >
+                    <div className="tickets-cta-title">Buy tickets here</div>
+                    <div className="tickets-cta-body">Purchase tickets directly from official transport providers.</div>
+                  </button>
                 </section>
               </>
             )}

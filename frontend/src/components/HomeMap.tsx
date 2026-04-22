@@ -40,6 +40,8 @@ const HomeMap: React.FC<Props> = ({ stops = [], mode = 'all' }) => {
             <TileC
               attribution='&copy; OpenStreetMap contributors'
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+              subdomains="abc"
+              crossOrigin="anonymous"
             />
             <LiveStopLayer mode={mode} />
             {stops.length > 0 && <StopMarkers stops={stops} />}

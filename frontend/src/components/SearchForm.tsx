@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import translations from '../translations';
 import { Stop } from '../types/stop';
 import { useUi } from '../contexts/UiContext';
+import { searchStops } from '../utils/searchStops';
 import { MapPin, Bus, Train, Shuffle, Search } from "lucide-react";
 
 type SearchFormProps = {
@@ -177,11 +178,11 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false, on
     const localStops = Array.isArray(availableStops) ? availableStops : [];
 
     if (!origin_id && from && from.length > 1) {
-      const exact = localStops.find((s) => valid.has(s.id) && s.name.toLowerCase() === from.trim().toLowerCase());
+      const exact = localStops.find((s) => valid.has(String(s.id)) && s.name.toLowerCase() === from.trim().toLowerCase());
       if (exact) origin_id = exact.id;
     }
     if (!destination_id && to && to.length > 1) {
-      const exact = localStops.find((s) => valid.has(s.id) && s.name.toLowerCase() === to.trim().toLowerCase());
+      const exact = localStops.find((s) => valid.has(String(s.id)) && s.name.toLowerCase() === to.trim().toLowerCase());
       if (exact) destination_id = exact.id;
     }
 
@@ -298,22 +299,51 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false, on
       .map((row) => row.stop);
   };
 
-  const fetchSuggestions = (query: string): Stop[] => {
+  const fetchSuggestions = async (query: string): Promise<Stop[]> => {
     if (!query || query.trim().length < 2) return [];
+
     const valid = validStopIds || new Set<string>();
-    const source = Array.isArray(availableStops) ? availableStops : [];
-    const routable = valid.size > 0 ? source.filter((r: any) => valid.has(r.id)) : source;
-    return filterAndRank(routable, query);
+    const localSource = Array.isArray(availableStops) ? availableStops : [];
+    const localRoutable = valid.size > 0
+      ? localSource.filter((r: any) => valid.has(String(r.id)))
+      : localSource;
+
+    let remote: Stop[] = [];
+    try {
+      remote = await searchStops(query, 30);
+    } catch (e) {
+      remote = [];
+    }
+
+    const remoteNormalized = (remote || []).map((s) => ({
+      id: String(s.id),
+      name: String(s.name),
+      type: s.type,
+      lat: Number(s.lat),
+      lon: Number(s.lon),
+    } as Stop));
+
+    const remoteRoutable = valid.size > 0
+      ? remoteNormalized.filter((r: any) => valid.has(String(r.id)))
+      : remoteNormalized;
+
+    const byId = new Map<string, Stop>();
+    [...localRoutable, ...remoteRoutable].forEach((s) => {
+      if (s?.id) byId.set(String(s.id), s);
+    });
+
+    return filterAndRank(Array.from(byId.values()), query).slice(0, 12);
   };
 
   useEffect(() => {
     let cancelled = false;
     const t = window.setTimeout(() => {
-      const list = fetchSuggestions(from);
-      if (!cancelled) {
-        setFromSuggestions(list);
-        setActiveFromIndex(list.length ? 0 : -1);
-      }
+      fetchSuggestions(from).then((list) => {
+        if (!cancelled) {
+          setFromSuggestions(list);
+          setActiveFromIndex(list.length ? 0 : -1);
+        }
+      });
     }, 300);
 
     return () => {
@@ -325,11 +355,12 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false, on
   useEffect(() => {
     let cancelled = false;
     const t = window.setTimeout(() => {
-      const list = fetchSuggestions(to);
-      if (!cancelled) {
-        setToSuggestions(list);
-        setActiveToIndex(list.length ? 0 : -1);
-      }
+      fetchSuggestions(to).then((list) => {
+        if (!cancelled) {
+          setToSuggestions(list);
+          setActiveToIndex(list.length ? 0 : -1);
+        }
+      });
     }, 300);
 
     return () => {

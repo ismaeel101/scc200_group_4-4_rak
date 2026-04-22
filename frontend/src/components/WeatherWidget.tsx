@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-const BACKEND_PORT = '8000'; 
-const WEATHER_API = `http://localhost:${BACKEND_PORT}/api/weather`;
+const BACKEND_BASE = 'http://127.0.0.1:8000';
+const DEFAULT_LAT = 54.1;
+const DEFAULT_LON = -2.5;
 
 interface WeatherData {
   temperature_c: number;
@@ -10,13 +11,29 @@ interface WeatherData {
   available: boolean;
 }
 
-const WeatherWidget: React.FC = () => {
+type WeatherWidgetProps = {
+  lat?: number;
+  lon?: number;
+};
+
+const WeatherWidget: React.FC<WeatherWidgetProps> = ({ lat, lon }) => {
   const [weather, setWeather] = useState<WeatherData | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
 
   useEffect(() => {
-    fetch(WEATHER_API)
-      .then((res) => res.json())
+    const latToUse = Number.isFinite(Number(lat)) ? Number(lat) : DEFAULT_LAT;
+    const lonToUse = Number.isFinite(Number(lon)) ? Number(lon) : DEFAULT_LON;
+    const weatherApi = `${BACKEND_BASE}/api/weather?${new URLSearchParams({
+      lat: String(latToUse),
+      lon: String(lonToUse),
+    }).toString()}`;
+
+    setLoading(true);
+    fetch(weatherApi)
+      .then((res) => {
+        if (!res.ok) throw new Error(`Weather request failed (${res.status})`);
+        return res.json();
+      })
       .then((data) => {
         if (data.available) setWeather(data);
         setLoading(false);
@@ -25,10 +42,10 @@ const WeatherWidget: React.FC = () => {
         // Silent failure as per Task W5/W8 [cite: 68, 109]
         setLoading(false);
       });
-  }, []);
+  }, [lat, lon]);
 
   if (loading) return <div className="text-xs animate-pulse">Loading weather...</div>;
-  if (!weather || !weather.available) return null; 
+  if (!weather || !weather.available) return null;
 
   return (
     <div className="flex flex-col mb-4">

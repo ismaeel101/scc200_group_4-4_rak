@@ -107,6 +107,9 @@ const Navbar: React.FC = () => {
           <NavLink to="/live" className={({ isActive }) => `navbar__link${isActive ? ' navbar__link--active' : ''}`}>
             {translations[language.code]?.liveDepartures || translations.en.liveDepartures}
           </NavLink>
+          <NavLink to="/tickets" className={({ isActive }) => `navbar__link${isActive ? ' navbar__link--active' : ''}`}>
+            {translations[language.code]?.tickets || translations.en.tickets}
+          </NavLink>
         </div>
 
         <div className="navbar__actions">

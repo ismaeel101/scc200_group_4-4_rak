@@ -163,6 +163,8 @@ const RouteMap: React.FC<{ legs?: RawLeg[] }> = ({ legs = [] }) => {
       <TileC
         attribution='&copy; OpenStreetMap contributors'
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        subdomains="abc"
+        crossOrigin="anonymous"
       />
       {displaySegments.map((segment, idx) => {
         return (
