@@ -75,15 +75,32 @@ def _apply_live_penalties(score, leg, explanations):
     return score
 
 
-def _apply_weather_penalty(score, explanations):
-    weather = get_weather_stub()
-    if weather.condition == "normal":
-        return score
+def _apply_weather_penalty(score, explanations, journey: dict | None = None):
+    # Prefer journey-level weather flag injected by the API. Fall back to stub.
+    is_adverse = False
+    condition_text = None
+
+    if journey is not None:
+        # API attaches 'is_adverse_weather' (bool) and optional 'weather' dict
+        try:
+            is_adverse = bool(journey.get("is_adverse_weather", False))
+            weather_obj = journey.get("weather")
+            if weather_obj and isinstance(weather_obj, dict):
+                condition_text = weather_obj.get("description")
+        except Exception:
+            is_adverse = False
+
+    if not is_adverse:
+        weather = get_weather_stub()
+        if weather.condition == "normal":
+            return score
+        is_adverse = True
+        condition_text = getattr(weather, "condition", None)
 
     explanations.append(
         ReliabilityExplanation(
             code="WEATHER",
-            text=f"Adverse weather: {weather.condition}."
+            text=f"Adverse weather: {condition_text or 'adverse'}."
         )
     )
     return max(0, score - 10)
@@ -148,8 +165,8 @@ def compute_reliability(journey: dict):
     for leg in journey["legs"]:
         score = _apply_live_penalties(score, leg, explanations)
 
-    # 4) Weather penalty
-    score = _apply_weather_penalty(score, explanations)
+    # 4) Weather penalty (use journey-level weather when available)
+    score = _apply_weather_penalty(score, explanations, journey)
 
     # 5) Band
     band = _band_from_score(score)

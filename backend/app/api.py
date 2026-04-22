@@ -11,6 +11,7 @@ from pathlib import Path
 from app.data.stops import StopService
 from app.domain.planner.planner import JourneyPlanner
 from app.domain.decision_support.decision_support import DecisionSupport
+import os
 from app.cache.cache_service import CacheService
 from app.domain.weather import fetch_weather
 
@@ -273,7 +274,8 @@ def get_journey_planner() -> JourneyPlanner:
 
 
 def get_decision_support() -> DecisionSupport:
-    return DecisionSupport()
+    enabled = os.environ.get("ENABLE_DECISION_SUPPORT", "true").lower() in ("1", "true", "yes")
+    return DecisionSupport(enabled=enabled)
 
 
 def get_cache_service() -> CacheService:
@@ -629,6 +631,13 @@ async def plan_journey(
         raise HTTPException(status_code=400, detail="Origin and destination cannot be identical")
 
     try:
+        # Fetch real weather for Lancaster/NW region before planning
+        try:
+            weather_data = await fetch_weather(54.047, -2.801)
+            is_adverse = weather_data.get("is_adverse", False) if weather_data else False
+        except Exception:
+            is_adverse = False
+
         raw_journeys = journey_planner.plan(
             origin_id=request.origin_id,
             destination_id=request.destination_id,
@@ -636,6 +645,7 @@ async def plan_journey(
             time_iso=request.time_iso,
             modes=request.modes,
             max_options=request.max_options,
+            is_adverse_weather=is_adverse,
         )
     except NoRouteFoundError:
         return JSONResponse(
@@ -652,6 +662,16 @@ async def plan_journey(
         return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
     journeys = [_parse_journey(j) for j in raw_journeys]
+
+    # Attach fetched weather data (and adverse flag) to parsed journeys so
+    # the reliability pipeline can use the same weather source as the planner.
+    try:
+        for j in journeys:
+            # keep a minimal boolean and the full weather dict when available
+            j["is_adverse_weather"] = bool(is_adverse)
+            j["weather"] = weather_data if isinstance(weather_data, dict) else None
+    except Exception:
+        pass
 
     try:
         annotated_journeys, flags = decision_support.annotate(journeys)
