@@ -2,7 +2,6 @@ import React, { useState } from "react";
 import { useNavigate } from 'react-router-dom';
 import SearchForm from "../components/SearchForm";
 import HomeMap from "../components/HomeMap";
-import WeatherWidget from "../components/WeatherWidget"; // Added import for W7
 import "./SearchPage.css";
 import translations from '../translations';
 import { useUi } from '../contexts/UiContext';
@@ -44,11 +43,6 @@ const SearchPage: React.FC = () => {
         <aside className="searchpage__panel" role="complementary" aria-label={`${planLabel} panel`}>
           <div className="searchpage__panel-inner">
             <h2 className="searchpage__panel-title">{planLabel}</h2>
-
-            {/* Added WeatherWidget here for Task W7 */}
-            <div style={{ marginBottom: '1rem' }}>
-              <WeatherWidget />
-            </div>
 
             <div className="searchpage__card">
               <SearchForm

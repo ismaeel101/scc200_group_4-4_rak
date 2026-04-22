@@ -258,8 +258,7 @@ const ResultsPage: React.FC = () => {
 
           <main className="resultspage__right">
             <section className="card weather-card">
-              <h3 className="card__title">Weather</h3>
-              <WeatherWidget lat={weatherCoords.lat} lon={weatherCoords.lon} />
+              <WeatherWidget variant="results" lat={weatherCoords.lat} lon={weatherCoords.lon} />
             </section>
 
             <section className="card map-card">

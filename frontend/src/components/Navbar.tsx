@@ -3,6 +3,7 @@ import { NavLink, useNavigate } from "react-router-dom";
 import "./Navbar.css";
 import { useUi, Language } from '../contexts/UiContext';
 import translations from '../translations';
+import WeatherWidget from './WeatherWidget';
 
 const LANG_OPTIONS: Language[] = [
   { code: 'en', label: 'English', flag: '🇬🇧' },
@@ -161,6 +162,8 @@ const Navbar: React.FC = () => {
               </div>
             )}
           </div>
+
+          <WeatherWidget variant="navbar" />
         </div>
       </div>
     </nav>

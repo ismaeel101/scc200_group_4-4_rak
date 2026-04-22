@@ -55,6 +55,10 @@
   backdrop-filter: blur(6px);
 }
 
+.weather-card {
+  padding: 10px 14px;
+}
+
 .journey-options .card__title,
 .map-card .card__title,
 .breakdown-card .card__title {
