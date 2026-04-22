@@ -118,7 +118,6 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false, on
   const [timeTouched, setTimeTouched] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [selectedMode, setSelectedMode] = useState('All modes');
-  const [journeyType, setJourneyType] = useState('All');
   const [rotating, setRotating] = useState(false);
   const [isDepart, setIsDepart] = useState(true);
   const formRef = useRef<HTMLFormElement | null>(null);
@@ -289,14 +288,49 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false, on
     if (ui.selectedDestinationName) setTo(ui.selectedDestinationName);
   }, [ui.selectedDestinationName]);
 
-  const filterAndRank = (results: Stop[], query: string): Stop[] => {
+  const filterAndRank = (results: Stop[], query: string, routableIds: Set<string>): Stop[] => {
     const q = query.trim().toLowerCase();
-    return (results || [])
-      .map((stop) => ({ stop, score: scoreMatch(q, stop?.name || '') }))
+    const rows = (results || [])
+      .map((stop) => {
+        const id = String(stop?.id || '');
+        const isRoutable = routableIds.size > 0 && routableIds.has(id);
+        return {
+          stop,
+          id,
+          isRoutable,
+          nameKey: String(stop?.name || '').trim().toLowerCase(),
+          score: scoreMatch(q, stop?.name || ''),
+        };
+      })
       .filter((row) => row.score >= 0)
-      .sort((a, b) => b.score - a.score || (a.stop.name || '').localeCompare(b.stop.name || ''))
-      .slice(0, 8)
-      .map((row) => row.stop);
+      .sort((a, b) => {
+        if (a.isRoutable !== b.isRoutable) return a.isRoutable ? -1 : 1;
+        if (a.score !== b.score) return b.score - a.score;
+        return (a.stop.name || '').localeCompare(b.stop.name || '');
+      });
+
+    // If duplicate names exist, keep routable entries for that name when possible.
+    const groupedByName = new Map<string, typeof rows>();
+    rows.forEach((row) => {
+      const key = row.nameKey;
+      if (!groupedByName.has(key)) groupedByName.set(key, []);
+      groupedByName.get(key)!.push(row);
+    });
+
+    const preferredRows: typeof rows = [];
+    groupedByName.forEach((group) => {
+      const hasRoutable = group.some((r) => r.isRoutable);
+      if (hasRoutable) preferredRows.push(...group.filter((r) => r.isRoutable));
+      else preferredRows.push(...group);
+    });
+
+    const dedupedById = new Map<string, Stop>();
+    preferredRows.forEach((row) => {
+      if (!row.id) return;
+      if (!dedupedById.has(row.id)) dedupedById.set(row.id, row.stop);
+    });
+
+    return Array.from(dedupedById.values()).slice(0, 12);
   };
 
   const fetchSuggestions = async (query: string): Promise<Stop[]> => {
@@ -304,9 +338,6 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false, on
 
     const valid = validStopIds || new Set<string>();
     const localSource = Array.isArray(availableStops) ? availableStops : [];
-    const localRoutable = valid.size > 0
-      ? localSource.filter((r: any) => valid.has(String(r.id)))
-      : localSource;
 
     let remote: Stop[] = [];
     try {
@@ -323,16 +354,12 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false, on
       lon: Number(s.lon),
     } as Stop));
 
-    const remoteRoutable = valid.size > 0
-      ? remoteNormalized.filter((r: any) => valid.has(String(r.id)))
-      : remoteNormalized;
-
     const byId = new Map<string, Stop>();
-    [...localRoutable, ...remoteRoutable].forEach((s) => {
+    [...localSource, ...remoteNormalized].forEach((s) => {
       if (s?.id) byId.set(String(s.id), s);
     });
 
-    return filterAndRank(Array.from(byId.values()), query).slice(0, 12);
+    return filterAndRank(Array.from(byId.values()), query, valid);
   };
 
   useEffect(() => {
@@ -599,15 +626,6 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false, on
           {(fieldErrors.date || fieldErrors.time) && (
             <div className="field-error" role="alert">{fieldErrors.date || fieldErrors.time}</div>
           )}
-        </div>
-      </div>
-
-      <div className="searchform__journey">
-        <label className="searchform__label">{t.journeyType}</label>
-        <div className="searchform__journey-toggle" role="tablist" aria-label="Journey type">
-          <button type="button" className={`mode__btn ${journeyType === 'All' ? 'mode__btn--active' : ''}`} onClick={() => setJourneyType('All')}>{t.all}</button>
-          <button type="button" className={`mode__btn ${journeyType === 'Fastest' ? 'mode__btn--active' : ''}`} onClick={() => setJourneyType('Fastest')}>{t.fastest}</button>
-          <button type="button" className={`mode__btn ${journeyType === 'Reliable' ? 'mode__btn--active' : ''}`} onClick={() => setJourneyType('Reliable')}>{t.reliable}</button>
         </div>
       </div>
 

@@ -299,8 +299,9 @@ const ResultsPage: React.FC = () => {
                       }
 
                       const modeLabel = (leg?.mode || '').toString();
-                      const fromVal = leg?.from_stop || leg?.from || '';
-                      const toVal = leg?.to_stop || leg?.to || '';
+                      const isVehicleLeg = modeLabel === 'bus' || modeLabel === 'rail' || modeLabel === 'train';
+                      const fromVal = isVehicleLeg ? (leg?.from || leg?.from_stop || '') : (leg?.from_stop || leg?.from || '');
+                      const toVal = isVehicleLeg ? (leg?.to || leg?.to_stop || '') : (leg?.to_stop || leg?.to || '');
                       const durationVal = Number.isFinite(Number(leg?.durationMinutes)) ? Number(leg?.durationMinutes) : '';
                       const durationText = modeLabel === 'walk' ? `${durationVal} walking` : durationVal !== '' ? `${durationVal} m` : '';
 

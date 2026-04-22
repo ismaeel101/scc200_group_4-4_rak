@@ -2,7 +2,7 @@ const translations: Record<string, Record<string, string | Record<string, string
     en: {
         brand: 'OptiRoute',
         planJourney: 'Plan Journey',
-        liveDepartures: 'Live Departures',
+        liveDepartures: 'Daily Timetable',
         tickets: 'Tickets',
         support: 'Support',
         map: 'Map',
@@ -47,7 +47,7 @@ const translations: Record<string, Record<string, string | Record<string, string
     fr: {
         brand: 'OptiRoute',
         planJourney: 'Planifier le trajet',
-        liveDepartures: 'Départs en direct',
+        liveDepartures: 'Horaires quotidiens',
         tickets: 'Billets',
         support: 'Assistance',
         map: 'Carte',
@@ -91,7 +91,7 @@ const translations: Record<string, Record<string, string | Record<string, string
     es: {
         brand: 'OptiRoute',
         planJourney: 'Planificar viaje',
-        liveDepartures: 'Salidas en directo',
+        liveDepartures: 'Horario diario',
         tickets: 'Billetes',
         support: 'Soporte',
         map: 'Mapa',
