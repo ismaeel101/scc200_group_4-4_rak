@@ -9,11 +9,14 @@ const LANG_OPTIONS: Language[] = [
   { code: 'en', label: 'English', flag: '🇬🇧' },
   { code: 'fr', label: 'Français', flag: '🇫🇷' },
   { code: 'es', label: 'Español', flag: '🇪🇸' },
+  { code: 'pl', label: 'Polski', flag: '🇵🇱' },
+  { code: 'pa', label: 'ਪੰਜਾਬੀ', flag: '🇮🇳' },
+  { code: 'ro', label: 'Română', flag: '🇷🇴' },
 ];
 
 const Navbar: React.FC = () => {
   const navigate = useNavigate();
-  const { language, setLanguage, highContrast, setHighContrast, largeText, setLargeText, reduceMotion, setReduceMotion } = useUi();
+  const { language, setLanguage, highContrast, setHighContrast, largeText, setLargeText, reduceMotion, setReduceMotion, underlineLinks, setUnderlineLinks, dyslexicFont, setDyslexicFont } = useUi();
   const [menuOpen, setMenuOpen] = useState(false);
   const [langOpen, setLangOpen] = useState(false);
   const [accOpen, setAccOpen] = useState(false);
@@ -92,9 +95,9 @@ const Navbar: React.FC = () => {
         <button
           className="navbar__brand"
           onClick={() => navigate('/')}
-          aria-label={translations[language.code]?.brand || translations.en.brand}
+          aria-label={(translations[language.code]?.brand || translations.en.brand) as string}
         >
-          {translations[language.code]?.brand || translations.en.brand}
+          {(translations[language.code]?.brand || translations.en.brand) as string}
         </button>
 
         <button className="navbar__toggle" aria-expanded={menuOpen} aria-label="Toggle navigation" onClick={() => setMenuOpen((v) => !v)}>
@@ -103,13 +106,13 @@ const Navbar: React.FC = () => {
 
         <div className={`navbar__links ${menuOpen ? 'navbar__links--open' : ''}`}>
           <NavLink to="/" end className={({ isActive }) => `navbar__link${isActive ? ' navbar__link--active' : ''}`}>
-            {translations[language.code]?.planJourney || translations.en.planJourney}
+            {(translations[language.code]?.planJourney || translations.en.planJourney) as string}
           </NavLink>
           <NavLink to="/live" className={({ isActive }) => `navbar__link${isActive ? ' navbar__link--active' : ''}`}>
-            {translations[language.code]?.liveDepartures || translations.en.liveDepartures}
+            {(translations[language.code]?.liveDepartures || translations.en.liveDepartures) as string}
           </NavLink>
           <NavLink to="/tickets" className={({ isActive }) => `navbar__link${isActive ? ' navbar__link--active' : ''}`}>
-            {translations[language.code]?.tickets || translations.en.tickets}
+            {(translations[language.code]?.tickets || translations.en.tickets) as string}
           </NavLink>
         </div>
 
@@ -144,7 +147,7 @@ const Navbar: React.FC = () => {
           </div>
 
           <div className="navbar__access" ref={accRef}>
-            <button className="navbar__access-btn" aria-haspopup="menu" aria-expanded={accOpen} onClick={() => setAccOpen((v) => !v)} aria-label="Accessibility options">{translations[language.code]?.accessibility || translations.en.accessibility}</button>
+            <button className="navbar__access-btn" aria-haspopup="menu" aria-expanded={accOpen} onClick={() => setAccOpen((v) => !v)} aria-label="Accessibility options">{(translations[language.code]?.accessibility || translations.en.accessibility) as string}</button>
             {accOpen && (
               <div className="navbar__access-menu" role="menu" ref={accMenuRef}>
                 <label className="access-row">
@@ -158,6 +161,14 @@ const Navbar: React.FC = () => {
                 <label className="access-row">
                   <input type="checkbox" checked={reduceMotion} onChange={(e) => setReduceMotion(e.target.checked)} />
                   <span>Reduce Motion</span>
+                </label>
+                <label className="access-row">
+                  <input type="checkbox" checked={underlineLinks} onChange={(e) => setUnderlineLinks(e.target.checked)} />
+                  <span>Underline Links</span>
+                </label>
+                <label className="access-row">
+                  <input type="checkbox" checked={dyslexicFont} onChange={(e) => setDyslexicFont(e.target.checked)} />
+                  <span>Dyslexic Font</span>
                 </label>
               </div>
             )}

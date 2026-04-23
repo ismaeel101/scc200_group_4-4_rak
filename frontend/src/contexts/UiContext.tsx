@@ -12,6 +12,10 @@ type UiContextType = {
     setLargeText: (v: boolean) => void;
     reduceMotion: boolean;
     setReduceMotion: (v: boolean) => void;
+    underlineLinks: boolean;
+    setUnderlineLinks: (val: boolean) => void;
+    dyslexicFont: boolean;
+    setDyslexicFont: (val: boolean) => void;
     // Selected stops from map
     selectedOriginId?: string | null;
     selectedOriginName?: string | null;
@@ -36,6 +40,8 @@ export const UiProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     const [highContrast, setHighContrast] = useState(false);
     const [largeText, setLargeText] = useState(false);
     const [reduceMotion, setReduceMotion] = useState(false);
+    const [underlineLinks, setUnderlineLinks] = useState(false);
+    const [dyslexicFont, setDyslexicFont] = useState(false);
     const [selectedOriginId, setSelectedOriginId] = useState<string | null>(null);
     const [selectedOriginName, setSelectedOriginName] = useState<string | null>(null);
     const [selectedDestinationId, setSelectedDestinationId] = useState<string | null>(null);
@@ -72,7 +78,9 @@ export const UiProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         if (highContrast) root.classList.add('ux-high-contrast'); else root.classList.remove('ux-high-contrast');
         if (largeText) root.classList.add('ux-large-text'); else root.classList.remove('ux-large-text');
         if (reduceMotion) root.classList.add('ux-reduce-motion'); else root.classList.remove('ux-reduce-motion');
-    }, [highContrast, largeText, reduceMotion]);
+        if (underlineLinks) root.classList.add('ux-underline-links'); else root.classList.remove('ux-underline-links');
+        if (dyslexicFont) root.classList.add('ux-dyslexic-font'); else root.classList.remove('ux-dyslexic-font');
+    }, [highContrast, largeText, reduceMotion, underlineLinks, dyslexicFont]);
 
     const value = {
         language,
@@ -83,6 +91,10 @@ export const UiProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         setLargeText,
         reduceMotion,
         setReduceMotion,
+        underlineLinks,
+        setUnderlineLinks,
+        dyslexicFont,
+        setDyslexicFont,
         selectedOriginId,
         selectedOriginName,
         setSelectedOrigin: (id: string | null, name: string | null = null) => {

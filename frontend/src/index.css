@@ -1,3 +1,10 @@
+@font-face {
+    font-family: 'OpenDyslexic';
+    src: url('./assets/OpenDyslexic-Regular.otf') format('opentype');
+    font-weight: normal;
+    font-style: normal;
+}
+
 html,
 body,
 #root {
@@ -26,14 +33,46 @@ div {
 }
 
 /* Accessibility toggles applied via root classes from UiContext */
-.ux-high-contrast {
-    background-color: #000;
-    color: #fff;
+/* 1. Global Reset */
+.ux-high-contrast,
+.ux-high-contrast * {
+    background-color: #000 !important;
+    color: #fff !important;
+    border-color: #fff !important;
+    /* Forces all borders to be white */
+    box-shadow: none !important;
+    /* Shadows are invisible in high contrast */
 }
 
+/* 2. Fix Interactive Elements */
 .ux-high-contrast a,
 .ux-high-contrast button {
-    color: #fff;
+    border: 2px solid #fff !important;
+    /* Gives buttons a clear "box" */
+    padding: 4px 8px;
+    /* Ensures the border doesn't hug the text too tight */
+    color: #ffff00 !important;
+    /* Yellow links are standard for high contrast */
+}
+
+/* 3. Highlight Hover States */
+.ux-high-contrast a:hover,
+.ux-high-contrast button:hover {
+    background-color: #fff !important;
+    /* Invert on hover */
+    color: #000 !important;
+}
+
+/* 4. Fix Cards and Containers */
+/* Replace '.card' with whatever class your journey result boxes use */
+.ux-high-contrast .card,
+.ux-high-contrast div[style*="background-color"] {
+    border: 1px solid #fff !important;
+}
+
+.ux-high-contrast img,
+.ux-high-contrast .leaflet-container {
+    filter: grayscale(1) invert(1) brightness(1.2);
 }
 
 .ux-large-text {
@@ -43,6 +82,23 @@ div {
 .ux-reduce-motion * {
     transition: none !important;
     animation: none !important;
+}
+
+/* Apply to the root and every single child element */
+.ux-dyslexic-font,
+.ux-dyslexic-font * {
+    font-family: 'OpenDyslexic', sans-serif !important;
+}
+
+.ux-underline-links a {
+    text-decoration: underline !important;
+
+    text-underline-offset: 3px;
+    text-decoration-thickness: 2px;
+}
+
+.ux-underline-links button.link-style {
+    text-decoration: underline !important;
 }
 
 /* Loading overlay */
