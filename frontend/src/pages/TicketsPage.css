@@ -14,6 +14,34 @@
     color: #0f172a;
 }
 
+.tickets-page__header-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 1rem;
+}
+
+.tickets-page__header-row .tickets-page__title {
+    margin: 0;
+}
+
+.tickets-page__plan-btn {
+    border: 1px solid #cbd5e1;
+    background: #f8fafc;
+    color: #1e40af;
+    border-radius: 10px;
+    padding: 0.5rem 0.85rem;
+    font-size: 0.9rem;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.tickets-page__plan-btn:hover {
+    background: #eff6ff;
+    border-color: #93c5fd;
+}
+
 .tickets-section {
     margin-bottom: 1.2rem;
 }
@@ -69,4 +97,15 @@
 
 .ticket-card__button:hover {
     background: #1e40af;
+}
+
+@media (max-width: 900px) {
+    .tickets-page__header-row {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .tickets-page__plan-btn {
+        align-self: flex-end;
+    }
 }

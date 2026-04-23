@@ -273,6 +273,24 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false, on
     setTimeout(() => setRotating(false), 200);
   };
 
+  const handleClearLocations = () => {
+    setFrom('');
+    setTo('');
+    setSelectedOrigin(null, null);
+    setSelectedDestination(null, null);
+    setFromSuggestions([]);
+    setToSuggestions([]);
+    setOpenDropdown(null);
+    setActiveFromIndex(-1);
+    setActiveToIndex(-1);
+    setFieldErrors((prev) => {
+      const next = { ...prev };
+      delete next.from;
+      delete next.to;
+      return next;
+    });
+  };
+
   useEffect(() => {
     // set default date/time = tomorrow at 15:00 (UK local)
     setSelectedDate(getUkTomorrowDateString());
@@ -587,6 +605,30 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false, on
           {fieldErrors.to && <div className="field-error" role="alert">{fieldErrors.to}</div>}
         </div>
       </div>
+
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '0.25rem' }}>
+        <button
+          type="button"
+          onClick={handleClearLocations}
+          disabled={isLoading}
+          aria-disabled={isLoading}
+          className="searchform__clear"
+          style={{
+            background: 'transparent',
+            border: 'none',
+            color: 'var(--muted, #6b7280)',
+            font: 'inherit',
+            fontSize: '0.85rem',
+            lineHeight: 1.2,
+            padding: 0,
+            cursor: isLoading ? 'not-allowed' : 'pointer',
+            opacity: isLoading ? 0.6 : 0.85,
+          }}
+        >
+          Clear
+        </button>
+      </div>
+
       <div className="searchform__grid-2">
         <div className="toggle-wrap" aria-label={`${t.depart} / ${t.arrive}`}>
           <span className="visually-hidden" id="timeToggleLabel">{t.depart} / {t.arrive}</span>

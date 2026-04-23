@@ -55,22 +55,16 @@ const LiveStopLayer: React.FC<{ mode?: 'all' | 'bus' | 'rail' }> = ({ mode = 'al
         try {
             const container = e.popup.getElement();
             if (!container) return;
+
+            // Handle Start here / Go here buttons
             const originBtn = container.querySelector('.set-origin');
             const destBtn = container.querySelector('.set-dest');
             if (originBtn) {
-                // use onclick to avoid stacking duplicate listeners and use event.currentTarget.dataset
                 originBtn.onclick = (ev: any) => {
                     const el = ev.currentTarget as HTMLElement;
                     const id = el?.dataset?.id ?? null;
                     const name = el?.dataset?.name ?? null;
-                    const stop = { id, name };
-                    console.log('Selected stop:', stop);
-                    console.log('Using ATCO:', id);
-                    if (!id || id.trim().length === 0) {
-                        console.warn('Invalid stop ID, ignoring:', stop);
-                        return;
-                    }
-                    console.log('[LiveStopLayer] Set as Origin clicked:', id, name);
+                    if (!id || id.trim().length === 0) return;
                     ui.setSelectedOrigin(id, name);
                     const input = document.getElementById('from-input') as HTMLInputElement | null;
                     if (input) input.value = name || '';
@@ -82,56 +76,79 @@ const LiveStopLayer: React.FC<{ mode?: 'all' | 'bus' | 'rail' }> = ({ mode = 'al
                     const el = ev.currentTarget as HTMLElement;
                     const id = el?.dataset?.id ?? null;
                     const name = el?.dataset?.name ?? null;
-                    const stop = { id, name };
-                    console.log('Selected stop:', stop);
-                    console.log('Using ATCO:', id);
-                    if (!id || id.trim().length === 0) {
-                        console.warn('Invalid stop ID, ignoring:', stop);
-                        return;
-                    }
-                    console.log('[LiveStopLayer] Set as Destination clicked:', id, name);
+                    if (!id || id.trim().length === 0) return;
                     ui.setSelectedDestination(id, name);
                     const input = document.getElementById('to-input') as HTMLInputElement | null;
                     if (input) input.value = name || '';
                     try { e.popup._close(); } catch (_) { }
                 };
             }
+
+            // Load departures board
+            const depContainer = container.querySelector('.departures-board');
+            if (!depContainer) return;
+            const stopId = (depContainer as HTMLElement).dataset?.stopId;
+            if (!stopId) return;
+
+            const backendBase = `${location.protocol}//${location.hostname}:8000`;
+            fetch(`${backendBase}/api/departures?stop_id=${encodeURIComponent(stopId)}&limit=5`)
+                .then(r => r.ok ? r.json() : null)
+                .then(data => {
+                    const departures = data?.departures || [];
+                    if (departures.length === 0) {
+                        depContainer.innerHTML = '<div style="color:#6b7280;font-size:11px;padding:4px 0;">No upcoming departures.</div>';
+                        return;
+                    }
+                    const rows = departures.map((d: any) => `
+                        <tr>
+                            <td style="padding:3px 8px 3px 0;color:#f59e0b;font-weight:700;font-size:12px;white-space:nowrap;">${d.time}</td>
+                            <td style="padding:3px 8px;color:#60a5fa;font-weight:700;font-size:12px;white-space:nowrap;">${d.line}</td>
+                            <td style="padding:3px 0;color:#f1f5f9;font-size:12px;">${d.destination}</td>
+                        </tr>
+                    `).join('');
+                    depContainer.innerHTML = `
+                        <div style="margin-top:8px;background:#0f172a;border-radius:6px;padding:8px;">
+                            <div style="color:#f59e0b;font-weight:800;font-size:10px;letter-spacing:1px;margin-bottom:5px;">DEPARTURES</div>
+                            <table style="width:100%;border-collapse:collapse;">
+                                <thead>
+                                    <tr style="border-bottom:1px solid #1e293b;">
+                                        <th style="color:#60a5fa;font-size:9px;font-weight:600;text-align:left;padding:2px 8px 3px 0;letter-spacing:0.5px;">TIME</th>
+                                        <th style="color:#60a5fa;font-size:9px;font-weight:600;text-align:left;padding:2px 8px 3px;letter-spacing:0.5px;">LINE</th>
+                                        <th style="color:#60a5fa;font-size:9px;font-weight:600;text-align:left;padding:2px 0 3px;letter-spacing:0.5px;">DESTINATION</th>
+                                    </tr>
+                                </thead>
+                                <tbody>${rows}</tbody>
+                            </table>
+                        </div>
+                    `;
+                })
+                .catch(() => {
+                    depContainer.innerHTML = '<div style="color:#f87171;font-size:11px;">Failed to load departures.</div>';
+                });
         } catch (err) { }
     };
-
-    // validStopIds is populated from the backend at app startup (UiContext)
 
     useEffect(() => {
         const fetchStops = async () => {
             const nowMs = Date.now();
-            if (nowMs < backoffUntilRef.current) {
-                return;
-            }
+            if (nowMs < backoffUntilRef.current) return;
 
-            // soft cooldown to avoid request spikes while panning/zooming
             const MIN_FETCH_INTERVAL_MS = 900;
-            if (nowMs - lastFetchAtRef.current < MIN_FETCH_INTERVAL_MS) {
-                return;
-            }
+            if (nowMs - lastFetchAtRef.current < MIN_FETCH_INTERVAL_MS) return;
 
             try {
                 const bounds = map.getBounds();
                 const sw = bounds.getSouthWest();
                 const ne = bounds.getNorthEast();
-
                 const zoom = map.getZoom();
-                console.log('[LiveStopLayer] map zoom', zoom);
                 const dynamicLimit = zoomFetchLimit(zoom);
 
                 const requestKey = [
-                    quantize(sw.lat),
-                    quantize(ne.lat),
-                    quantize(sw.lng),
-                    quantize(ne.lng),
+                    quantize(sw.lat), quantize(ne.lat),
+                    quantize(sw.lng), quantize(ne.lng),
                     dynamicLimit,
                 ].join('|');
 
-                // prevent duplicate fetches for the same viewport slice
                 if (requestKey === lastRequestKeyRef.current && cacheRef.current.has(requestKey)) {
                     const cached = cacheRef.current.get(requestKey) || [];
                     setStops(cached);
@@ -145,33 +162,24 @@ const LiveStopLayer: React.FC<{ mode?: 'all' | 'bus' | 'rail' }> = ({ mode = 'al
                 const controller = abortRef.current;
 
                 const params = new URLSearchParams({
-                    min_lat: String(sw.lat),
-                    max_lat: String(ne.lat),
-                    min_lon: String(sw.lng),
-                    max_lon: String(ne.lng),
+                    min_lat: String(sw.lat), max_lat: String(ne.lat),
+                    min_lon: String(sw.lng), max_lon: String(ne.lng),
                     limit: String(dynamicLimit),
                 });
 
                 const backendBase = `${location.protocol}//${location.hostname}:8000`;
                 const url = `${backendBase}/api/stops?${params.toString()}`;
-                console.log('[LiveStopLayer] fetching URL:', url);
                 const res = await fetch(url, { signal: controller.signal });
                 if (res.status === 429) {
-                    // apply short backoff when server rate limiter triggers
                     backoffUntilRef.current = Date.now() + 4000;
                     return;
                 }
                 if (!res.ok) return;
                 const stops = await res.json();
-                // filter to routable stops using shared validStopIds (populated by UiContext)
                 const valid = ui.validStopIds || new Set<string>();
-                const totalStops = Array.isArray(stops) ? stops.length : 0;
-                console.log('[LiveStopLayer] Valid stop IDs count:', valid.size);
                 const filteredStops = Array.isArray(stops)
                     ? (valid.size > 0 ? stops.filter((s: any) => valid.has(s.id)) : stops)
                     : [];
-                console.log('[LiveStopLayer] Total stops:', totalStops);
-                console.log('[LiveStopLayer] Routable stops:', filteredStops.length);
 
                 setStops(filteredStops);
                 lastFetchAtRef.current = Date.now();
@@ -190,13 +198,10 @@ const LiveStopLayer: React.FC<{ mode?: 'all' | 'bus' | 'rail' }> = ({ mode = 'al
                         lon: Number(s.lon),
                     }))
                 );
-            } catch (err) {
-                // aborted or network error — ignore
-            }
+            } catch (err) { }
         };
 
         const onMove = () => {
-            // debounce a little
             window.clearTimeout((onMove as any)._t);
             (onMove as any)._t = window.setTimeout(() => fetchStops(), 250);
         };
@@ -210,9 +215,7 @@ const LiveStopLayer: React.FC<{ mode?: 'all' | 'bus' | 'rail' }> = ({ mode = 'al
             popupHandlerRef.current(e);
         };
 
-        // initial load once the map is ready
         map.whenReady(() => {
-            console.log('[LiveStopLayer] initial ready zoom', map.getZoom());
             setZoomLevel(map.getZoom());
             fetchStops();
         });
@@ -269,24 +272,23 @@ const LiveStopLayer: React.FC<{ mode?: 'all' | 'bus' | 'rail' }> = ({ mode = 'al
                     weight: 2,
                 });
                 circle.bindPopup(
-                    `<div style="min-width:220px;max-width:260px;background:#0b2136;color:#e6eefb;border-radius:12px;padding:12px;box-shadow:0 10px 28px rgba(2,6,23,0.28);border:1px solid rgba(255,255,255,0.08);font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;">
-                        <div style=\"display:flex;align-items:center;gap:8px;margin:0 0 6px 0;\">
-                            <span style=\"font-size:16px;line-height:1;\">${markerIcon}</span>
-                            <h4 style=\"margin:0;font-size:14px;font-weight:700;color:#ffffff;line-height:1.3;\">${s.name}</h4>
+                    `<div style="min-width:240px;max-width:280px;background:#0b2136;color:#e6eefb;border-radius:12px;padding:12px;box-shadow:0 10px 28px rgba(2,6,23,0.28);border:1px solid rgba(255,255,255,0.08);font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;">
+                        <div style="display:flex;align-items:center;gap:8px;margin:0 0 4px 0;">
+                            <span style="font-size:16px;line-height:1;">${markerIcon}</span>
+                            <h4 style="margin:0;font-size:14px;font-weight:700;color:#ffffff;line-height:1.3;">${s.name}</h4>
                         </div>
-                        <div style=\"font-size:12px;color:#c7d6ea;margin:0 0 10px 0;\">${isRail ? 'Rail stop' : 'Bus stop'}</div>
-                        <div style=\"display:flex;gap:8px;\">
-                            <button class=\"set-origin\" data-id=\"${s.id}\" data-name=\"${s.name}\" style=\"flex:1;background:#10b981;border:1px solid rgba(255,255,255,0.08);color:#ffffff;padding:7px 10px;border-radius:8px;cursor:pointer;font-weight:700;font-size:12px;\">🟢 Start here</button>
-                            <button class=\"set-dest\" data-id=\"${s.id}\" data-name=\"${s.name}\" style=\"flex:1;background:#1e3a8a;border:1px solid rgba(255,255,255,0.1);color:#ffffff;padding:7px 10px;border-radius:8px;cursor:pointer;font-weight:700;font-size:12px;\">🔴 Go here</button>
+                        <div style="font-size:11px;color:#c7d6ea;margin:0 0 8px 0;">${isRail ? 'Rail stop' : 'Bus stop'}</div>
+                        <div style="display:flex;gap:8px;margin-bottom:6px;">
+                            <button class="set-origin" data-id="${s.id}" data-name="${s.name}" style="flex:1;background:#10b981;border:1px solid rgba(255,255,255,0.08);color:#ffffff;padding:7px 10px;border-radius:8px;cursor:pointer;font-weight:700;font-size:12px;">🟢 Start here</button>
+                            <button class="set-dest" data-id="${s.id}" data-name="${s.name}" style="flex:1;background:#1e3a8a;border:1px solid rgba(255,255,255,0.1);color:#ffffff;padding:7px 10px;border-radius:8px;cursor:pointer;font-weight:700;font-size:12px;">🔴 Go here</button>
                         </div>
+                        <div class="departures-board" data-stop-id="${s.id}" style="font-size:11px;color:#6b7280;">Loading departures…</div>
                     </div>`,
                     { className: 'stop-popup-clean' }
                 );
                 circle.addTo(map);
                 created.push(circle);
-            } catch (e) {
-                // ignore bad coords
-            }
+            } catch (e) { }
         });
 
         markersRef.current = created;

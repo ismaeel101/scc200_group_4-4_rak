@@ -1,4 +1,5 @@
 import React from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useUi } from '../contexts/UiContext';
 import translations from '../translations';
 import './TicketsPage.css';
@@ -36,6 +37,7 @@ const railOperators: OperatorCard[] = [
 ];
 
 const TicketsPage: React.FC = () => {
+    const navigate = useNavigate();
     const { language } = useUi();
     const t = translations[language.code] || translations.en;
     const title = typeof (t as any).tickets === 'string' ? (t as any).tickets : 'Tickets';
@@ -43,7 +45,16 @@ const TicketsPage: React.FC = () => {
     return (
         <main className="tickets-page">
             <div className="tickets-page__container">
-                <h2 className="tickets-page__title">{title}</h2>
+                <div className="tickets-page__header-row">
+                    <h2 className="tickets-page__title">{title}</h2>
+                    <button
+                        type="button"
+                        className="tickets-page__plan-btn"
+                        onClick={() => navigate('/')}
+                    >
+                        Plan Journey
+                    </button>
+                </div>
 
                 <section className="tickets-section" aria-label="Bus Tickets">
                     <h3 className="tickets-section__title">Bus Tickets</h3>

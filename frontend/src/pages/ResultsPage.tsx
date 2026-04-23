@@ -1,4 +1,3 @@
-
 import React, { useState, useMemo, useEffect, useCallback } from "react";
 import { useLocation, useNavigate } from 'react-router-dom';
 import "./ResultsPage.css";
@@ -104,9 +103,7 @@ const ResultsPage: React.FC = () => {
     };
 
     loadJourneys();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [search]);
 
   const filteredBySearch = journeys;
@@ -118,6 +115,13 @@ const ResultsPage: React.FC = () => {
   }, [filteredBySearch]);
 
   const journeysToRender: any[] = Array.isArray(filteredBySearch) ? filteredBySearch : [];
+  const fastestDurationMin = useMemo(() => {
+    const durations = journeysToRender
+      .map((j: any) => Number(j?.total_duration_min))
+      .filter((n: number) => Number.isFinite(n));
+    if (!durations.length) return null;
+    return Math.min(...durations);
+  }, [journeysToRender]);
   const activeJourney = selectedJourney || (journeysToRender && journeysToRender[0]) || null;
   const activeLegs = Array.isArray((activeJourney as any)?.legs)
     ? (activeJourney as any).legs.filter((leg: any) => {
@@ -143,6 +147,46 @@ const ResultsPage: React.FC = () => {
   const [legStops, setLegStops] = useState<Record<number, { name: string; arrival_time: string; departure_time: string }[]>>({});
   const [legStopsLoading, setLegStopsLoading] = useState<Record<number, boolean>>({});
 
+  // Map waypoints: auto-fetched when selected journey changes so each bus line draws its own route
+  const [mapLegs, setMapLegs] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (!activeJourney) { setMapLegs([]); return; }
+    const vehicle = (activeJourney.legs || []).filter((l: any) =>
+      l.mode === 'bus' || l.mode === 'rail' || l.mode === 'train'
+    );
+    if (!vehicle.length) { setMapLegs(activeLegs); return; }
+
+    let cancelled = false;
+    Promise.all(vehicle.map(async (leg: any) => {
+      if (!leg.service_id || leg.from_seq == null || leg.to_seq == null) return leg;
+      try {
+        const params = new URLSearchParams({
+          service_id: leg.service_id,
+          mode: leg.mode === 'train' ? 'rail' : leg.mode,
+          from_seq: String(leg.from_seq),
+          to_seq: String(leg.to_seq),
+        });
+        const res = await fetch(`http://127.0.0.1:8000/api/leg-stops?${params}`);
+        if (!res.ok) return leg;
+        const data = await res.json();
+        const stops: any[] = data.stops || [];
+        const waypoints: [number, number][] = [
+          [leg.from_lat, leg.from_lon],
+          ...stops
+            .filter((s: any) => s.lat != null && s.lon != null)
+            .map((s: any) => [s.lat, s.lon] as [number, number]),
+          [leg.to_lat, leg.to_lon],
+        ].filter(([a, b]) => a != null && b != null) as [number, number][];
+        return { ...leg, _waypoints: waypoints };
+      } catch {
+        return leg;
+      }
+    })).then(enriched => { if (!cancelled) setMapLegs(enriched); });
+
+    return () => { cancelled = true; };
+  }, [activeJourney]);
+
   // Reset expanded legs when selected journey changes
   useEffect(() => {
     setExpandedLegs({});
@@ -151,11 +195,7 @@ const ResultsPage: React.FC = () => {
   }, [selectedJourney]);
 
   const toggleLegStops = useCallback(async (legIdx: number, leg: any) => {
-    setExpandedLegs(prev => {
-      const next = { ...prev, [legIdx]: !prev[legIdx] };
-      return next;
-    });
-    // Fetch intermediate stops if not already loaded
+    setExpandedLegs(prev => ({ ...prev, [legIdx]: !prev[legIdx] }));
     if (!legStops[legIdx] && leg?.service_id && leg?.from_seq != null && leg?.to_seq != null && leg?.mode !== 'walk') {
       setLegStopsLoading(prev => ({ ...prev, [legIdx]: true }));
       try {
@@ -194,7 +234,16 @@ const ResultsPage: React.FC = () => {
   return (
     <div className="resultspage">
       <div className="resultspage__container">
-        <h2 className="resultspage__title">{journeyResultsLabel}</h2>
+        <div className="resultspage__header-row">
+          <h2 className="resultspage__title">{journeyResultsLabel}</h2>
+          <button
+            type="button"
+            className="resultspage__plan-btn"
+            onClick={() => navigate('/')}
+          >
+            Plan Journey
+          </button>
+        </div>
 
         <div className="resultspage__grid">
           <aside className="resultspage__left">
@@ -217,8 +266,10 @@ const ResultsPage: React.FC = () => {
                   const legs = Array.isArray(j?.legs) ? j.legs : [];
                   const relText = reliabilityText(j);
                   const relClass = reliabilityClass(j);
+                  const isFastest = fastestDurationMin !== null && durationMin === fastestDurationMin;
                   return (
-                    <article key={idx} className={`route-card ${selectedJourney === j ? 'route-card--selected' : ''}`} onClick={() => setSelectedJourney((prev) => (prev === j ? null : j))}>
+                    <article key={idx} className={`route-card ${selectedJourney === j ? 'route-card--selected' : ''} ${isFastest ? 'route-card--fastest' : ''}`} onClick={() => setSelectedJourney((prev) => (prev === j ? null : j))}>
+                      {isFastest && <span className="route-card__fastest-badge">Fastest</span>}
                       <div className="route-card__main">
                         <div className="route-times">
                           <div className="time">{formatTimeSafe(j?.depart_time)}</div>
@@ -266,7 +317,7 @@ const ResultsPage: React.FC = () => {
               <div className="map-placeholder" role="region" aria-label={routeMapLabel}>
                 <div className="map-inner" style={{ height: '100%' }}>
                   {activeJourney && activeLegs.length > 0 ? (
-                    <RouteMap legs={activeLegs} />
+                    <RouteMap legs={mapLegs.length ? mapLegs : activeLegs} />
                   ) : (
                     activeJourney ? <div style={{ padding: 12 }}>{routeMapLabel}</div> : null
                   )}
@@ -299,9 +350,8 @@ const ResultsPage: React.FC = () => {
                       }
 
                       const modeLabel = (leg?.mode || '').toString();
-                      const isVehicleLeg = modeLabel === 'bus' || modeLabel === 'rail' || modeLabel === 'train';
-                      const fromVal = isVehicleLeg ? (leg?.from || leg?.from_stop || '') : (leg?.from_stop || leg?.from || '');
-                      const toVal = isVehicleLeg ? (leg?.to || leg?.to_stop || '') : (leg?.to_stop || leg?.to || '');
+                      const fromVal = leg?.from_stop || leg?.from || '';
+                      const toVal = leg?.to_stop || leg?.to || '';
                       const durationVal = Number.isFinite(Number(leg?.durationMinutes)) ? Number(leg?.durationMinutes) : '';
                       const durationText = modeLabel === 'walk' ? `${durationVal} walking` : durationVal !== '' ? `${durationVal} m` : '';
 
@@ -315,7 +365,6 @@ const ResultsPage: React.FC = () => {
                                 <div className="leg__secondary">
                                   <div className="leg__stop leg__stop--from"><MapPin size={14} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 4 }} />{fromLabel}: {fromVal}</div>
 
-                                  {/* Intermediate stops toggle */}
                                   {modeLabel !== 'walk' && leg?.service_id && leg?.from_seq != null && leg?.to_seq != null && (leg.to_seq - leg.from_seq > 1) && (
                                     <button
                                       className="leg__stops-toggle"
@@ -328,7 +377,6 @@ const ResultsPage: React.FC = () => {
                                     </button>
                                   )}
 
-                                  {/* Intermediate stops list */}
                                   {expandedLegs[idx] && (
                                     <div className="leg__intermediate-stops" style={{ marginLeft: 18, borderLeft: '2px dashed #d1d5db', paddingLeft: 10, marginTop: 4, marginBottom: 4 }}>
                                       {legStopsLoading[idx] && <div style={{ fontSize: 12, color: '#9ca3af' }}>Loading stops...</div>}

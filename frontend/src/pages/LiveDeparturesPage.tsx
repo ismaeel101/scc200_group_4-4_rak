@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import translations from '../translations';
 import { useUi } from '../contexts/UiContext';
 import './LiveDeparturesPage.css';
@@ -161,6 +162,7 @@ const addOffset = (baseTime: string, offset: number): string | null => {
 };
 
 const LiveDeparturesPage: React.FC = () => {
+    const navigate = useNavigate();
     const ui = useUi();
     const t = translations[ui.language.code] || translations.en;
     const liveDeparturesLabel = typeof t.liveDepartures === 'string' ? t.liveDepartures : 'Daily Timetable';
@@ -202,7 +204,16 @@ const LiveDeparturesPage: React.FC = () => {
     return (
         <main className="live-page">
             <div className="live-page__container">
-                <h2 className="live-page__title">{liveDeparturesLabel}</h2>
+                <div className="live-page__header-row">
+                    <h2 className="live-page__title">{liveDeparturesLabel}</h2>
+                    <button
+                        type="button"
+                        className="live-page__plan-btn"
+                        onClick={() => navigate('/')}
+                    >
+                        Plan Journey
+                    </button>
+                </div>
 
                 <section className="live-layout">
                     <div className="live-card live-routes">

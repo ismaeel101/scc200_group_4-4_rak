@@ -11,16 +11,8 @@ function FitBounds({ positions }: { positions: Coordinates[] }) {
     const latlngs = positions.map((p) => [p[0], p[1]] as [number, number]);
 
     const apply = () => {
-      try {
-        map.invalidateSize();
-      } catch (e) {
-        // ignore
-      }
-      try {
-        map.fitBounds(latlngs, { padding: [40, 40] });
-      } catch (e) {
-        // ignore
-      }
+      try { map.invalidateSize(); } catch (e) { }
+      try { map.fitBounds(latlngs, { padding: [40, 40] }); } catch (e) { }
     };
 
     if (typeof (map as any).whenReady === 'function') {
@@ -30,13 +22,7 @@ function FitBounds({ positions }: { positions: Coordinates[] }) {
     }
 
     const onResize = () => {
-      requestAnimationFrame(() => {
-        try {
-          map.invalidateSize();
-        } catch (e) {
-          // ignore
-        }
-      });
+      requestAnimationFrame(() => { try { map.invalidateSize(); } catch (e) { } });
     };
 
     window.addEventListener('resize', onResize);
@@ -63,6 +49,7 @@ type RawLeg = {
   from_lon?: number;
   to_lat?: number;
   to_lon?: number;
+  _waypoints?: [number, number][];
 };
 
 type RouteSegment = {
@@ -79,6 +66,12 @@ const RouteMap: React.FC<{ legs?: RawLeg[] }> = ({ legs = [] }) => {
   const routeSegments = useMemo(() => {
     return (legs || [])
       .map((leg) => {
+        // Use pre-fetched waypoints (real stop coordinates) when available
+        const waypoints = (leg as any)._waypoints as [number, number][] | undefined;
+        if (waypoints && waypoints.length >= 2) {
+          return { mode: (leg?.mode || '').toString(), points: waypoints };
+        }
+        // Fallback: straight line between origin and destination
         const fromLat = toNum((leg as any)?.from_lat);
         const fromLon = toNum((leg as any)?.from_lon);
         const toLat = toNum((leg as any)?.to_lat);
@@ -107,16 +100,24 @@ const RouteMap: React.FC<{ legs?: RawLeg[] }> = ({ legs = [] }) => {
       try {
         const routed = await Promise.all(
           routeSegments.map(async (segment) => {
-            const from = segment.points[0];
-            const to = segment.points[segment.points.length - 1];
-            const url = `https://router.project-osrm.org/route/v1/driving/${from[1]},${from[0]};${to[1]},${to[0]}?overview=full&geometries=geojson`;
+            // Build OSRM waypoints string from all points (up to 10 to avoid URL limits)
+            const pts = segment.points;
+            // Sample evenly if too many points
+            const MAX_WAYPOINTS = 10;
+            let sampled = pts;
+            if (pts.length > MAX_WAYPOINTS) {
+              const step = (pts.length - 1) / (MAX_WAYPOINTS - 1);
+              sampled = Array.from({ length: MAX_WAYPOINTS }, (_, i) => pts[Math.round(i * step)]);
+            }
+            const coords = sampled.map(p => `${p[1]},${p[0]}`).join(';');
+            const url = `https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson`;
             const res = await fetch(url, { signal: controller.signal });
             if (!res.ok) return segment;
             const data = await res.json();
-            const coords = data?.routes?.[0]?.geometry?.coordinates;
-            if (!Array.isArray(coords) || coords.length < 2) return segment;
+            const routeCoords = data?.routes?.[0]?.geometry?.coordinates;
+            if (!Array.isArray(routeCoords) || routeCoords.length < 2) return segment;
 
-            const points = coords
+            const points = routeCoords
               .map((c: any) => {
                 const lon = toNum(Array.isArray(c) ? c[0] : null);
                 const lat = toNum(Array.isArray(c) ? c[1] : null);
@@ -152,29 +153,35 @@ const RouteMap: React.FC<{ legs?: RawLeg[] }> = ({ legs = [] }) => {
 
   const fallbackCoord: Coordinates | undefined = allPoints.length ? allPoints[0] : undefined;
 
-  // Bounds roughly for North West UK
   const maxBounds: [number, number][] = [
     [53.0, -4.8],
     [55.2, -1.0],
   ];
 
   return (
-    <MapC className="route-map" center={[fallbackCoord ? fallbackCoord[0] : 54.05, fallbackCoord ? fallbackCoord[1] : -2.8]} zoom={10} style={{ height: '100%', width: '100%' }} minZoom={6} maxZoom={13} maxBounds={maxBounds} maxBoundsViscosity={0.8}>
+    <MapC
+      className="route-map"
+      center={[fallbackCoord ? fallbackCoord[0] : 54.05, fallbackCoord ? fallbackCoord[1] : -2.8]}
+      zoom={10}
+      style={{ height: '100%', width: '100%' }}
+      minZoom={6}
+      maxZoom={13}
+      maxBounds={maxBounds}
+      maxBoundsViscosity={0.8}
+    >
       <TileC
         attribution='&copy; OpenStreetMap contributors'
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         subdomains="abc"
         crossOrigin="anonymous"
       />
-      {displaySegments.map((segment, idx) => {
-        return (
-          <PolyC
-            key={idx}
-            positions={segment.points.map((p) => [p[0], p[1]])}
-            pathOptions={{ color: modeColor(segment.mode), weight: 5, opacity: 0.95 }}
-          />
-        );
-      })}
+      {displaySegments.map((segment, idx) => (
+        <PolyC
+          key={idx}
+          positions={segment.points.map((p) => [p[0], p[1]])}
+          pathOptions={{ color: modeColor(segment.mode), weight: 5, opacity: 0.95 }}
+        />
+      ))}
 
       {allPoints.length > 0 && (
         <CircleC

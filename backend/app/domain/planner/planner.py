@@ -178,7 +178,7 @@ class JourneyPlanner:
 
         return None
 
-    def _compute_reliability(self, legs, duration_min, conn, is_adverse_weather=False):
+    def _compute_reliability(self, legs, duration_min, conn):
         score = 100
         explanation = []
         changes = max(0, len([l for l in legs if l.get("mode") != "walk"]) - 1) if legs else 0
@@ -207,11 +207,6 @@ class JourneyPlanner:
         if delayed:
             score -= 10
             explanation.append("Rail delay reported -10")
-
-        # Weather penalty
-        if is_adverse_weather:
-            score -= 10
-            explanation.append("Adverse weather conditions -10")
 
         score = max(0, min(100, score))
         if score >= 80:
@@ -342,6 +337,7 @@ class JourneyPlanner:
         window_start=None,
         window_end=None,
         downstream_limit=10,
+        deduplicate=True,
     ):
         """
         Return candidate rail legs starting from stop_id.
@@ -506,6 +502,14 @@ class JourneyPlanner:
                     }
                 )
 
+        # Remove duplicate candidates caused by duplicate schedule rows in the DB
+        seen_cands = {}
+        for c in candidates:
+            ckey = (c["trip_id"], c["depart_dt"], c["arrive_dt"], c["to_stop_id"])
+            if ckey not in seen_cands:
+                seen_cands[ckey] = c
+        candidates = list(seen_cands.values())
+
         # Sort by arrival time first — always prefer the train that gets there fastest,
         # even if it departs slightly later (e.g. fast express vs slow stopper)
         candidates.sort(
@@ -518,6 +522,7 @@ class JourneyPlanner:
         )
 
         # Deduplicate: keep only the fastest-arriving train per destination stop
+        # Skip when deduplicate=False (e.g. direct search needs all departure times)
         seen_dst = {}
         deduped = []
         for c in candidates:
@@ -531,6 +536,10 @@ class JourneyPlanner:
                     seen_dst[dst] = c
                     deduped = [x for x in deduped if x["to_stop_id"] != dst]
                     deduped.append(c)
+
+        if not deduplicate:
+            candidates.sort(key=lambda x: (x["arrive_dt"], x["depart_dt"]))
+            return candidates
 
         deduped.sort(key=lambda x: (x["arrive_dt"], x["depart_dt"]))
         return deduped
@@ -582,7 +591,7 @@ class JourneyPlanner:
             transfer_points.append(vehicle_legs[i].get("to"))
 
         return (
-            tuple((leg.get("mode"), leg.get("line") or "") for leg in vehicle_legs),
+            tuple((leg.get("mode"), leg.get("line") or leg.get("service_id") or "") for leg in vehicle_legs),
             first_vehicle.get("from"),
             last_vehicle.get("to"),
             tuple(transfer_points),
@@ -725,7 +734,7 @@ class JourneyPlanner:
     # Main public method
     # ---------------------------
 
-    def plan(self, origin_id=None, destination_id=None, time_type=None, time_iso=None, modes=None, max_options=None, is_adverse_weather=False):
+    def plan(self, origin_id=None, destination_id=None, time_type=None, time_iso=None, modes=None, max_options=None):
         if (
             self.provider is not None
             and origin_id is not None
@@ -819,6 +828,26 @@ class JourneyPlanner:
         dest_lon = float(drow["lon"]) if drow["lon"] is not None else None
         dest_name = drow["name"]
 
+        # Expand origin/destination to include all co-located stop IDs (within 50m, same name).
+        # This means if the user picks one of several IDs for the same physical stop,
+        # all sibling IDs are tried so timetable lookups don't miss routes.
+        def _colocated_ids(primary_id: str, lat, lon, name: str) -> list:
+            if lat is None or lon is None:
+                return [primary_id]
+            nearby = _catchment(lat, lon, meters=50)
+            ids = [primary_id]
+            for s in nearby:
+                sid = s["id"]
+                if sid == primary_id:
+                    continue
+                srow = _resolve(sid)
+                if srow and srow.get("name", "").strip().lower() == name.strip().lower():
+                    ids.append(sid)
+            return ids
+
+        origin_ids = _colocated_ids(origin_id, origin_lat, origin_lon, origin_name)
+        dest_ids_expanded = _colocated_ids(destination_id, dest_lat, dest_lon, dest_name)
+
         radii = [500, 1000]
         window_hours_attempts = [3, 6, 12, None]
 
@@ -842,6 +871,7 @@ class JourneyPlanner:
             dest_catch = [{"id": destination_id, "name": dest_name, "lat": dest_lat, "lon": dest_lon, "distance_m": 0.0}]
 
         journeys = []
+        all_exact_journeys = []  # accumulates across all window iterations, deduped once after
 
 
         # --- Targeted bus->rail search (fast, no heap) ---
@@ -1102,7 +1132,7 @@ class JourneyPlanner:
 
                         existing = journey_dedup.get(line_name)
                         if existing is None or end_dt < existing[0]:
-                            score, band, expl = self._compute_reliability(legs, total_dur, conn, is_adverse_weather=is_adverse_weather)
+                            score, band, expl = self._compute_reliability(legs, total_dur, conn)
                             journey_dedup[line_name] = (end_dt, {
                                 "depart_time": start_dt.isoformat(),
                                 "arrive_time": end_dt.isoformat(),
@@ -1211,20 +1241,23 @@ class JourneyPlanner:
                 except Exception:
                     return False
 
-            origin_exact_usable = _has_usable(origin_id)
-            dest_exact_usable = _has_usable(destination_id)
+            origin_exact_usable = any(_has_usable(sid) for sid in origin_ids)
+            dest_exact_usable = any(_has_usable(sid) for sid in dest_ids_expanded)
             exact_journeys = []
             try:
                 if origin_exact_usable and dest_exact_usable and use_bus:
+                    _exact_dep_str = f"{requested_dt.hour:02d}:{requested_dt.minute:02d}:00"
+                    _origin_q = ",".join("?" * len(origin_ids))
                     cur_exact = conn.execute(
-                        """
-                        SELECT trip_id, sequence, departure_time
+                        f"""
+                        SELECT trip_id, sequence, departure_time, stop_id
                         FROM bus.stop_times
-                        WHERE stop_id=?
+                        WHERE stop_id IN ({_origin_q})
+                        AND departure_time >= ?
                         ORDER BY departure_time, trip_id, sequence
                         LIMIT 2000
                         """,
-                        (origin_id,),
+                        (*origin_ids, _exact_dep_str),
                     )
                     for origin_row in cur_exact.fetchall():
                         check_timeout()
@@ -1236,15 +1269,18 @@ class JourneyPlanner:
                         if enforce_window and not self._window_contains(depart_dt, window_start, window_end):
                             continue
 
+                        # Check all destination co-located IDs
+                        dr = None
+                        _dest_q = ",".join("?" * len(dest_ids_expanded))
                         cur_dest = conn.execute(
-                            """
+                            f"""
                             SELECT sequence, departure_time
                             FROM bus.stop_times
-                            WHERE trip_id=? AND stop_id=?
+                            WHERE trip_id=? AND stop_id IN ({_dest_q})
                             ORDER BY sequence
                             LIMIT 1
                             """,
-                            (trip, destination_id),
+                            (trip, *dest_ids_expanded),
                         )
                         dr = cur_dest.fetchone()
                         if not dr:
@@ -1294,7 +1330,7 @@ class JourneyPlanner:
                             )
                             total_duration = 1
 
-                        score, band, explanation = self._compute_reliability([vehicle], total_duration, conn, is_adverse_weather=is_adverse_weather)
+                        score, band, explanation = self._compute_reliability([vehicle], total_duration, conn)
                         exact_journeys.append(
                             {
                                 "depart_time": depart_dt.isoformat(),
@@ -1316,63 +1352,72 @@ class JourneyPlanner:
 
             if origin_exact_usable and dest_exact_usable and use_rail:
                 try:
-                    rail_candidates = self._get_rail_candidates_from_stop(
-                        conn=conn,
-                        stop_id=origin_id,
-                        current_time=requested_dt,
-                        requested_dt=requested_dt,
-                        enforce_window=enforce_window,
-                        window_start=window_start,
-                        window_end=window_end,
-                        downstream_limit=15,
-                    )
                     rail_direct = []
                     dest_catch_local = _catchment(dest_lat, dest_lon, meters=500)
-                    dest_ids_local = set(s["id"] for s in dest_catch_local)
-                    for rc in rail_candidates:
-                        if rc["to_stop_id"] in dest_ids_local or rc["to_stop_id"] == destination_id:
-                            depart_dt = rc["depart_dt"]
-                            arrive_dt = rc["arrive_dt"]
-                            total_duration = int((arrive_dt - depart_dt).total_seconds() / 60)
-                            if total_duration <= 0:
-                                continue
-                            vehicle = self._vehicle_leg_dict(
-                                "rail",
-                                origin_name,
-                                rc["to_stop_name"],
-                                depart_dt,
-                                arrive_dt,
-                                line=rc.get("trip_id"),
-                                from_lat=origin_lat,
-                                from_lon=origin_lon,
-                                to_lat=rc.get("to_lat"),
-                                to_lon=rc.get("to_lon"),
-                                service_id=rc.get("trip_id"),
-                                from_seq=rc.get("from_seq"),
-                                to_seq=rc.get("to_seq"),
-                            )
-                            score, band, explanation = self._compute_reliability([vehicle], total_duration, conn, is_adverse_weather=is_adverse_weather)
-                            rail_direct.append(
-                                {
-                                    "depart_time": depart_dt.isoformat(),
-                                    "arrive_time": arrive_dt.isoformat(),
-                                    "total_duration_min": total_duration,
-                                    "changes": 0,
-                                    "reliability_score": score,
-                                    "reliability_band": band,
-                                    "reliability_explanation": explanation,
-                                    "legs": [vehicle],
-                                }
-                            )
-                    if rail_direct:
-                        journeys.extend(rail_direct)
+                    dest_ids_local = set(s["id"] for s in dest_catch_local) | set(dest_ids_expanded)
+                    for _rail_origin_id in origin_ids:
+                        rail_candidates = self._get_rail_candidates_from_stop(
+                            conn=conn,
+                            stop_id=_rail_origin_id,
+                            current_time=requested_dt,
+                            requested_dt=requested_dt,
+                            enforce_window=enforce_window,
+                            window_start=window_start,
+                            window_end=window_end,
+                            downstream_limit=15,
+                            deduplicate=False,
+                        )
+                        for rc in rail_candidates:
+                            if rc["to_stop_id"] in dest_ids_local or rc["to_stop_id"] == destination_id:
+                                depart_dt = rc["depart_dt"]
+                                arrive_dt = rc["arrive_dt"]
+                                total_duration = int((arrive_dt - depart_dt).total_seconds() / 60)
+                                if total_duration <= 0:
+                                    continue
+                                vehicle = self._vehicle_leg_dict(
+                                    "rail",
+                                    origin_name,
+                                    rc["to_stop_name"],
+                                    depart_dt,
+                                    arrive_dt,
+                                    line=rc.get("trip_id"),
+                                    from_lat=origin_lat,
+                                    from_lon=origin_lon,
+                                    to_lat=rc.get("to_lat"),
+                                    to_lon=rc.get("to_lon"),
+                                    service_id=rc.get("trip_id"),
+                                    from_seq=rc.get("from_seq"),
+                                    to_seq=rc.get("to_seq"),
+                                )
+                                score, band, explanation = self._compute_reliability([vehicle], total_duration, conn)
+                                rail_direct.append(
+                                    {
+                                        "depart_time": depart_dt.isoformat(),
+                                        "arrive_time": arrive_dt.isoformat(),
+                                        "total_duration_min": total_duration,
+                                        "changes": 0,
+                                        "reliability_score": score,
+                                        "reliability_band": band,
+                                        "reliability_explanation": explanation,
+                                        "legs": [vehicle],
+                                    }
+                                )
+                    # Dedup by (depart_time, arrive_time) — multiple train_uids often represent
+                    # the same physical service with duplicate schedule entries
+                    _seen_rail: dict = {}
+                    for _rd in rail_direct:
+                        _rkey = (_rd["depart_time"], _rd["arrive_time"])
+                        if _rkey not in _seen_rail:
+                            _seen_rail[_rkey] = _rd
+                    if _seen_rail:
+                        journeys.extend(_seen_rail.values())
                 except NoRouteFoundError:
                     pass
                 except Exception:
                     pass
 
-            # Always add direct journeys first
-            journeys.extend(exact_journeys)
+            # Accumulate exact direct journeys — dedup happens once after all window iterations
+            all_exact_journeys.extend(exact_journeys)
 
 
             # Only run heap-based multi-leg if we still need more options
@@ -1385,11 +1430,11 @@ class JourneyPlanner:
                     if not origin_catch or not dest_catch:
                         continue
 
-                    origin_ids = [s["id"] for s in origin_catch]
+                    origin_ids_heap = [s["id"] for s in origin_catch]
                     dest_ids = set(s["id"] for s in dest_catch)
 
-                    if use_bus and origin_ids and dest_ids:
-                        q_marks = ",".join("?" for _ in origin_ids)
+                    if use_bus and origin_ids_heap and dest_ids:
+                        q_marks = ",".join("?" for _ in origin_ids_heap)
                         cur_bus = conn.execute(
                             f"""
                             SELECT trip_id, stop_id, sequence, departure_time
@@ -1397,7 +1442,7 @@ class JourneyPlanner:
                             WHERE stop_id IN ({q_marks})
                             ORDER BY departure_time, trip_id, sequence
                             """,
-                            tuple(origin_ids),
+                            tuple(origin_ids_heap),
                         )
                         rows = cur_bus.fetchall()
                         trip_to_origins = {}
@@ -1538,7 +1583,7 @@ class JourneyPlanner:
                                     if total_duration < 0:
                                         continue
 
-                                    score, band, explanation = self._compute_reliability(legs, total_duration, conn, is_adverse_weather=is_adverse_weather)
+                                    score, band, explanation = self._compute_reliability(legs, total_duration, conn)
 
                                     journeys.append(
                                         {
@@ -1562,14 +1607,14 @@ class JourneyPlanner:
                     if len(journeys) >= max_options:
                         break
 
-                origin_ids = [s["id"] for s in origin_catch]
+                origin_ids_heap = [s["id"] for s in origin_catch]
                 dest_ids = set(s["id"] for s in dest_catch)
 
-                if (use_bus or use_rail) and origin_ids and dest_ids:
+                if (use_bus or use_rail) and origin_ids_heap and dest_ids:
                     origin_candidates = []
 
                     if use_bus:
-                        for sid in origin_ids:
+                        for sid in origin_ids_heap:
                             cur_seed = conn.execute(
                                 """
                                 SELECT trip_id, stop_id, sequence, departure_time
@@ -1589,7 +1634,7 @@ class JourneyPlanner:
                                 origin_candidates.append((depart_dt, r, "bus"))
 
                     if use_rail:
-                        for sid in origin_ids:
+                        for sid in origin_ids_heap:
                             rail_candidates = self._get_rail_candidates_from_stop(
                                 conn=conn,
                                 stop_id=sid,
@@ -1618,7 +1663,7 @@ class JourneyPlanner:
 
                     MAX_STATES = 5000
                     MAX_VEHICLE_LEGS = 3      # hard cap: never suggest more than 3 changes
-                    DOWNSTREAM_LIMIT = 10
+                    DOWNSTREAM_LIMIT = 20     # increased from 10 to handle longer rail routes
 
                     journeys_found = []
                     explored_states = 0
@@ -1703,9 +1748,13 @@ class JourneyPlanner:
                                 continue
 
                             # Reject if a change is present but saves less than 10 min per change vs best known direct
+                            # Only compare against direct journeys that end at the same destination stop
                             if n_changes > 0 and journeys:
                                 best_direct = min(
-                                    (j for j in journeys if j.get("changes", 0) == 0),
+                                    (j for j in journeys
+                                     if j.get("changes", 0) == 0
+                                     and j.get("legs")
+                                     and j["legs"][-1].get("to") == (cur_legs[-1].get("to") if cur_legs else None)),
                                     key=lambda j: self._parse_iso(j.get("arrive_time")) or datetime.max,
                                     default=None,
                                 )
@@ -1716,7 +1765,7 @@ class JourneyPlanner:
                                     if saving_secs < required_saving:
                                         continue
 
-                            score, band, explanation = self._compute_reliability(cur_legs, total_duration, conn, is_adverse_weather=is_adverse_weather)
+                            score, band, explanation = self._compute_reliability(cur_legs, total_duration, conn)
                             journeys_found.append(
                                 {
                                     "depart_time": cur_legs[0]["depart"],
@@ -1943,7 +1992,7 @@ class JourneyPlanner:
                                 ):
                                     cur_dist = self._haversine_m(cur_lat, cur_lon, dest_lat, dest_lon)
                                     ds_dist = self._haversine_m(ds_lat, ds_lon, dest_lat, dest_lon)
-                                    if ds_dist > cur_dist + 2000:
+                                    if ds_dist > cur_dist + 15000:
                                         allow_expand = False
 
                                 if not allow_expand:
@@ -1989,6 +2038,18 @@ class JourneyPlanner:
                     break
 
         # --- Targeted bus->rail search (outside window loop, runs once) ---
+
+        # Dedup all_exact_journeys across window iterations: one entry per (depart_time, line)
+        _seen_exact: dict = {}
+        for _ej in all_exact_journeys:
+            _ej_legs = _ej.get("legs", [])
+            _ej_line = _ej_legs[0].get("line") or _ej_legs[0].get("service_id", "") if _ej_legs else ""
+            _ej_key = (_ej.get("depart_time"), _ej_line)
+            _ej_arr = self._parse_iso(_ej.get("arrive_time")) or datetime.max
+            if _ej_key not in _seen_exact or _ej_arr < (self._parse_iso(_seen_exact[_ej_key].get("arrive_time")) or datetime.max):
+                _seen_exact[_ej_key] = _ej
+        journeys.extend(_seen_exact.values())
+
         conn.close()
 
         if not journeys:
@@ -2017,6 +2078,7 @@ class JourneyPlanner:
                     l.get("mode"),
                     l.get("from"),
                     l.get("to"),
+                    l.get("line") or l.get("service_id", ""),
                     _norm_time_min(l.get("depart")),
                     _norm_time_min(l.get("arrive")),
                 )
@@ -2084,6 +2146,31 @@ class JourneyPlanner:
             except Exception as ex:
                 print(f"DEBUG GOOD: exception {ex}")
                 continue
+
+        # Suppress change journeys when a direct route to the SAME destination exists
+        # and the change doesn't arrive meaningfully earlier (>10 min saving per change required)
+        def _last_stop(j):
+            legs = j.get("legs", [])
+            return legs[-1].get("to") if legs else None
+
+        dest_stop = _last_stop(good[0]) if good else None
+        direct_arrives = [
+            self._parse_iso(j.get("arrive_time"))
+            for j in good
+            if j.get("changes", 0) == 0 and _last_stop(j) == dest_stop
+        ]
+        if direct_arrives:
+            best_direct_arrive = min(a for a in direct_arrives if a is not None)
+            good = [
+                j for j in good
+                if j.get("changes", 0) == 0
+                or _last_stop(j) != dest_stop
+                or (
+                    self._parse_iso(j.get("arrive_time")) is not None
+                    and (best_direct_arrive - self._parse_iso(j.get("arrive_time"))).total_seconds()
+                    >= CHANGE_TIME_SAVING_THRESHOLD_SECS * j.get("changes", 1)
+                )
+            ]
 
         if time_type == "depart_at":
             def _first_vehicle_depart(jj):

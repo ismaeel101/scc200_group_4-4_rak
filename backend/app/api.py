@@ -11,7 +11,6 @@ from pathlib import Path
 from app.data.stops import StopService
 from app.domain.planner.planner import JourneyPlanner
 from app.domain.decision_support.decision_support import DecisionSupport
-import os
 from app.cache.cache_service import CacheService
 from app.domain.weather import fetch_weather
 
@@ -251,6 +250,11 @@ def _parse_journey(raw) -> dict:
     if isinstance(raw, dict):
         parsed = dict(raw)
         parsed["legs"] = [_parse_leg(leg) for leg in raw.get("legs", [])]
+        # Normalise plural key added by reliability_pipeline into the singular key the model expects
+        if "reliability_explanations" in parsed and "reliability_explanation" not in parsed:
+            parsed["reliability_explanation"] = parsed.pop("reliability_explanations")
+        else:
+            parsed.pop("reliability_explanations", None)
         return parsed
 
     return {
@@ -274,8 +278,7 @@ def get_journey_planner() -> JourneyPlanner:
 
 
 def get_decision_support() -> DecisionSupport:
-    enabled = os.environ.get("ENABLE_DECISION_SUPPORT", "true").lower() in ("1", "true", "yes")
-    return DecisionSupport(enabled=enabled)
+    return DecisionSupport()
 
 
 def get_cache_service() -> CacheService:
@@ -521,6 +524,136 @@ async def get_stops(
         conn.close()
 
 
+
+
+@app.get("/api/departures", tags=["Routing"], dependencies=[Depends(rate_limiter)])
+async def get_departures(
+    stop_id: str = Query(..., description="Stop ATCO code"),
+    limit: int = Query(5, ge=1, le=30),
+):
+    """Return next timetabled departures from a stop."""
+    from datetime import datetime as dt
+    now = dt.now()
+    dep_str = f"{now.hour:02d}:{now.minute:02d}:00"
+
+    stops_db = _find_db_path("stops.db", "optiroute.db")
+    if not stops_db:
+        raise HTTPException(status_code=503, detail="Database file not found")
+
+    conn = sqlite3.connect(str(stops_db))
+    conn.row_factory = sqlite3.Row
+    bus_db = _find_db_path("bus.db", "database1.db")
+    rail_db = _find_db_path("rail.db")
+
+    if bus_db:
+        try:
+            conn.execute(f"ATTACH DATABASE '{bus_db}' AS bus")
+        except Exception:
+            pass
+    if rail_db:
+        try:
+            conn.execute(f"ATTACH DATABASE '{rail_db}' AS rail")
+        except Exception:
+            pass
+
+    results = []
+
+    # Bus departures
+    try:
+        rows = conn.execute(
+            """
+            SELECT DISTINCT st.departure_time, s.line_name, sp.common_name AS destination
+            FROM bus.stop_times st
+            JOIN bus.trips t ON st.trip_id = t.id
+            JOIN bus.services s ON t.service_id = s.id
+            JOIN bus.stop_times st_last ON st_last.trip_id = st.trip_id
+                AND st_last.sequence = (
+                    SELECT MAX(sequence) FROM bus.stop_times WHERE trip_id = st.trip_id
+                )
+            JOIN stops sp ON st_last.stop_id = sp.atco_code
+            WHERE st.stop_id = ?
+              AND st.departure_time >= ?
+            ORDER BY st.departure_time
+            LIMIT ?
+            """,
+            (stop_id, dep_str, limit * 3),
+        ).fetchall()
+        for r in rows:
+            results.append({
+                "time": r["departure_time"][:5],
+                "line": r["line_name"] or "",
+                "destination": r["destination"] or "",
+                "mode": "bus",
+            })
+    except Exception:
+        pass
+
+    # Rail departures
+    try:
+        is_rail = stop_id.startswith("RAIL:") or stop_id.startswith("9100")
+        if is_rail:
+            code = stop_id.split(":", 1)[1] if stop_id.startswith("RAIL:") else stop_id[4:]
+            row = conn.execute(
+                "SELECT tiploc FROM rail.stations WHERE tiploc=? OR crs=? LIMIT 1",
+                (code, code),
+            ).fetchone()
+            tiploc = row[0] if row else code
+            dep_lower = f"{now.hour:02d}{now.minute:02d}"
+            rail_rows = conn.execute(
+                """
+                SELECT DISTINCT s1.train_uid, s1.departure,
+                       COALESCE(st2.common_name, st3.common_name, s_last.tiploc) AS destination
+                FROM rail.schedules s1
+                JOIN rail.schedules s_last ON s_last.train_uid = s1.train_uid
+                    AND s_last.seq = (SELECT MAX(seq) FROM rail.schedules WHERE train_uid = s1.train_uid)
+                LEFT JOIN stops st2 ON st2.atco_code = 'RAIL:' || s_last.tiploc
+                LEFT JOIN stops st3 ON st3.atco_code = '9100' || s_last.tiploc
+                WHERE s1.tiploc = ?
+                  AND s1.departure IS NOT NULL
+                  AND REPLACE(s1.departure, 'H', '') >= ?
+                ORDER BY s1.departure
+                LIMIT ?
+                """,
+                (tiploc, dep_lower, limit * 3),
+            ).fetchall()
+            for r in rail_rows:
+                dep_raw = r["departure"].replace("H", "")
+                dep_fmt = f"{dep_raw[:2]}:{dep_raw[2:]}" if len(dep_raw) == 4 else dep_raw
+                dest = (r["destination"] or "").strip()
+                results.append({
+                    "time": dep_fmt,
+                    "line": r["train_uid"] or "",
+                    "destination": dest,
+                    "mode": "rail",
+                })
+    except Exception:
+        pass
+
+    # Get origin stop name to filter out circular routes ending at origin
+    origin_name = None
+    try:
+        r = conn.execute("SELECT common_name FROM stops WHERE atco_code=? LIMIT 1", (stop_id,)).fetchone()
+        if r:
+            origin_name = r["common_name"].strip().lower()
+    except Exception:
+        pass
+
+    # Sort all by time and deduplicate, filtering out same-stop destinations
+    seen = set()
+    deduped = []
+    for r in sorted(results, key=lambda x: x["time"]):
+        dest = (r["destination"] or "").strip().lower()
+        if origin_name and dest == origin_name:
+            continue
+        key = (r["time"], r["line"], r["destination"])
+        if key not in seen:
+            seen.add(key)
+            deduped.append(r)
+
+    conn.close()
+    return {"departures": deduped[:limit]}
+
+
 @app.get("/api/leg-stops", tags=["Routing"], dependencies=[Depends(rate_limiter)])
 async def get_leg_stops(
     service_id: str = Query(..., description="Trip ID (bus trip_id or rail train_uid)"),
@@ -565,17 +698,24 @@ async def get_leg_stops(
             for r in rows:
                 stop_id = r["stop_id"]
                 name_row = None
+                lat, lon = None, None
                 try:
                     name_row = conn.execute(
-                        "SELECT common_name FROM stops WHERE atco_code=? LIMIT 1", (stop_id,)
+                        "SELECT common_name, latitude, longitude FROM stops WHERE atco_code=? LIMIT 1", (stop_id,)
                     ).fetchone()
+                    if name_row:
+                        lat = name_row["latitude"]
+                        lon = name_row["longitude"]
                 except Exception:
                     pass
                 if not name_row:
                     try:
                         name_row = conn.execute(
-                            "SELECT common_name FROM bus.bus_stops WHERE atco_code=? LIMIT 1", (stop_id,)
+                            "SELECT common_name, latitude, longitude FROM bus.bus_stops WHERE atco_code=? LIMIT 1", (stop_id,)
                         ).fetchone()
+                        if name_row:
+                            lat = name_row["latitude"]
+                            lon = name_row["longitude"]
                     except Exception:
                         pass
                 name = name_row["common_name"] if name_row else stop_id
@@ -584,6 +724,8 @@ async def get_leg_stops(
                     "arrival_time": r["arrival_time"],
                     "departure_time": r["departure_time"],
                     "sequence": r["sequence"],
+                    "lat": float(lat) if lat is not None else None,
+                    "lon": float(lon) if lon is not None else None,
                 })
         elif mode == "rail":
             rows = conn.execute(
@@ -631,13 +773,6 @@ async def plan_journey(
         raise HTTPException(status_code=400, detail="Origin and destination cannot be identical")
 
     try:
-        # Fetch real weather for Lancaster/NW region before planning
-        try:
-            weather_data = await fetch_weather(54.047, -2.801)
-            is_adverse = weather_data.get("is_adverse", False) if weather_data else False
-        except Exception:
-            is_adverse = False
-
         raw_journeys = journey_planner.plan(
             origin_id=request.origin_id,
             destination_id=request.destination_id,
@@ -645,7 +780,6 @@ async def plan_journey(
             time_iso=request.time_iso,
             modes=request.modes,
             max_options=request.max_options,
-            is_adverse_weather=is_adverse,
         )
     except NoRouteFoundError:
         return JSONResponse(
@@ -663,16 +797,6 @@ async def plan_journey(
 
     journeys = [_parse_journey(j) for j in raw_journeys]
 
-    # Attach fetched weather data (and adverse flag) to parsed journeys so
-    # the reliability pipeline can use the same weather source as the planner.
-    try:
-        for j in journeys:
-            # keep a minimal boolean and the full weather dict when available
-            j["is_adverse_weather"] = bool(is_adverse)
-            j["weather"] = weather_data if isinstance(weather_data, dict) else None
-    except Exception:
-        pass
-
     try:
         annotated_journeys, flags = decision_support.annotate(journeys)
         annotated_journeys = [_parse_journey(j) for j in annotated_journeys]
@@ -682,7 +806,7 @@ async def plan_journey(
 
     if sort_by == "time":
         annotated_journeys.sort(
-            key=lambda j: (j["total_duration_min"], j["changes"], -j["reliability_score"])
+            key=lambda j: (j["depart_time"], j["changes"], j["total_duration_min"])
         )
     else:
         annotated_journeys.sort(

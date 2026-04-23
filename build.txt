@@ -1,0 +1,87 @@
+# OptiRoute 🚌🚆
+
+---
+
+## Before Anything
+
+1. Open the project folder in VSCode
+2. Press `Ctrl+Shift+P`
+3. Type **Reopen in Container** and select it
+4. Wait for it to fully build, then open a terminal
+
+> ⚠️ Must be on campus or connected to the **University VPN**
+
+---
+
+## Check Databases Are Present
+
+The following database files should already be included in the submission. Verify they exist in **both** locations before continuing:
+
+```
+/workspace/bus.db
+/workspace/rail.db
+/workspace/stops.db
+
+/workspace/backend/bus.db
+/workspace/backend/rail.db
+/workspace/backend/stops.db
+```
+
+> ⚠️ If any are missing, contact the project team. Do not proceed without all 3 databases in both locations.
+
+---
+
+## Step 1 — Install Python Dependencies
+
+```bash
+pip install uvicorn sqlalchemy fastapi requests httpx --break-system-packages
+```
+
+---
+
+## Step 2 — Install Frontend Dependencies
+
+```bash
+cd /workspace/frontend && npm install
+```
+
+---
+
+## Step 3 — Sync Bus Stops ⚠️ Always run this before starting the server
+
+```bash
+cd /workspace/backend && python3 sync_bus_stops.py
+```
+
+---
+
+## Step 4 — Start the Backend
+
+```bash
+cd /workspace/backend
+PYTHONPATH=/workspace/backend python3 -m uvicorn app.api:app --reload --port 8000
+```
+
+✅ You should see:
+```
+INFO: Application startup complete.
+```
+
+---
+
+## Step 5 — Start the Frontend (new terminal)
+
+```bash
+cd /workspace/frontend && npm run dev
+```
+
+Open: **http://localhost:5173**
+
+---
+
+## Port 8000 Already in Use?
+
+```bash
+ss -tlnp | grep 8000
+kill -9 <PID>
+```

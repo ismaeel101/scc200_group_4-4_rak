@@ -21,6 +21,34 @@
   color: #071033;
 }
 
+.resultspage__header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 1rem;
+}
+
+.resultspage__header-row .resultspage__title {
+  margin: 0;
+}
+
+.resultspage__plan-btn {
+  border: 1px solid #cbd5e1;
+  background: #f8fafc;
+  color: #1e40af;
+  border-radius: 10px;
+  padding: 0.5rem 0.85rem;
+  font-size: 0.9rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.resultspage__plan-btn:hover {
+  background: #eff6ff;
+  border-color: #93c5fd;
+}
+
 
 .resultspage__grid {
   display: flex;
@@ -125,6 +153,11 @@
   /* clear blue border and subtle blue background tint */
   box-shadow: 0 10px 28px rgba(37, 99, 235, 0.06);
   transition: box-shadow 200ms ease, border-color 200ms ease, background-color 200ms ease;
+}
+
+.route-card--fastest {
+  background: #ecfdf5;
+  border-left: 5px solid #10b981;
 }
 
 .route-card__main {
@@ -323,6 +356,19 @@
   right: 10px;
   padding: 6px 10px;
   font-size: 14px;
+}
+
+.route-card__fastest-badge {
+  position: absolute;
+  top: 8px;
+  left: 10px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  font-weight: 800;
+  font-size: 12px;
+  line-height: 1;
+  background: #d1fae5;
+  color: #065f46;
 }
 
 .map-placeholder {
@@ -587,6 +633,15 @@
 
   .resultspage__title {
     text-align: center;
+  }
+
+  .resultspage__header-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .resultspage__plan-btn {
+    align-self: flex-end;
   }
 
   .resultspage__left,
