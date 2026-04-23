@@ -286,13 +286,23 @@ const ResultsPage: React.FC = () => {
                       </div>
                       <div className="route-card__foot">
                         <div className="route-card__foot-left">
-                          <div className="lines">
-                            {(legs || []).slice(0, 2).map((leg: any, i: number) => (
-                              <span key={i} className="line">
-                                <span className="line-badge">{(leg.mode === 'rail' || leg.mode === 'train') ? <Train size={16} /> : leg.mode === 'bus' ? <Bus size={16} /> : <span style={{ width: 16 }} />}</span>
-                                <span className="line-label">{leg.line || ''}</span>
-                              </span>
-                            ))}
+                          <div className="lines" style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                            {(legs || []).map((leg: any, i: number) => {
+                              // Skip walking legs if you only want to show vehicles in the summary
+                              if (leg.mode === 'walk') return null;
+                              return (
+                                <span key={i} className="line" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                  <span className="line-badge">
+                                    {(leg.mode === 'rail' || leg.mode === 'train') ? <Train size={16} /> : <Bus size={16} />}
+                                  </span>
+                                  <span className="line-label" style={{ fontWeight: 'bold' }}>
+                                    {leg.line || leg.service_id || ''}
+                                  </span>
+                                  {/* Add an arrow between legs if it's not the last vehicle leg */}
+                                  {i < legs.length - 1 && legs[i + 1].mode !== 'walk' && <ArrowRight size={12} className="leg-separator" />}
+                                </span>
+                              );
+                            })}
                           </div>
 
                           <span className={`badge badge--${relClass}`}>{relText}</span>
