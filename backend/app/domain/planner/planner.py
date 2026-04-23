@@ -5,13 +5,16 @@ import sqlite3
 import math
 import time
 import heapq
+import logging
 
 from datetime import datetime, timedelta
 from typing import Optional
+import os
 
 from .exceptions import NoRouteFoundError
 from .models import Journey, Leg, Mode
 from .providers import StopInfo
+from app.data.db_paths import find_db_path
 
 # walking constants
 WALK_MAX_METERS = 800
@@ -23,6 +26,11 @@ MIN_TRANSFER_WAIT_BUS_SECS  = 120   # 2 min minimum wait after arriving by bus
 MIN_TRANSFER_WAIT_RAIL_SECS = 300   # 5 min minimum wait after arriving by train
 CHANGE_TIME_SAVING_THRESHOLD_SECS = 600   # a change must save >=10 min vs direct to justify it
 MAX_WALK_TRANSFER_SECS = int(WALK_TRANSFER_MAX_M / WALKING_SPEED_MPS)  # ~857 s ≈ 14 min walk
+logger = logging.getLogger(__name__)
+
+
+def _planner_debug_enabled() -> bool:
+    return os.environ.get("ENABLE_PLANNER_DEBUG", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 class JourneyPlanner:
@@ -42,10 +50,9 @@ class JourneyPlanner:
 
     def __init__(self, provider=None):
         self.provider = provider
-        _project_root = Path(__file__).resolve().parents[3]
-        self.DB = _project_root / "stops.db"
-        self.BUS_DB = _project_root / "bus.db"
-        self.RAIL_DB = _project_root / "rail.db"
+        self.DB = find_db_path("stops.db") or (Path.cwd() / "stops.db")
+        self.BUS_DB = find_db_path("bus.db", "database1.db") or (Path.cwd() / "bus.db")
+        self.RAIL_DB = find_db_path("rail.db") or (Path.cwd() / "rail.db")
 
     def _parse_iso(self, s):
         if isinstance(s, datetime):
@@ -766,7 +773,8 @@ class JourneyPlanner:
             if key not in seen:
                 seen.add(key)
                 unique.append(j)
-
+        if _planner_debug_enabled():
+            logger.debug("planner provider mode counts: raw_journeys=%s unique_after_keying=%s", len(journeys), len(unique))
         unique.sort(key=lambda j: (j.arrive_time, j.depart_time, j.changes))
         return unique[:max_options]
 
@@ -786,7 +794,7 @@ class JourneyPlanner:
 
         requested_dt = self._parse_iso(time_iso)
         if requested_dt is not None and requested_dt.tzinfo is not None:
-            import datetime
+            # Remove tzinfo for naive local-time comparisons
             requested_dt = requested_dt.replace(tzinfo=None)
         if requested_dt is None:
             requested_dt = datetime.now()
@@ -839,6 +847,8 @@ class JourneyPlanner:
             return _resolve_cache[stop_id]
 
         def _catchment(lat, lon, meters=800):
+            if lat is None or lon is None:
+                return []
             key = (round(lat, 4), round(lon, 4), meters)
             if key not in _catchment_cache:
                 _catchment_cache[key] = self._catchment_stops(conn, lat, lon, meters)
@@ -887,6 +897,8 @@ class JourneyPlanner:
 
         origin_ids = _colocated_ids(origin_id, origin_lat, origin_lon, origin_name)
         dest_ids_expanded = _colocated_ids(destination_id, dest_lat, dest_lon, dest_name)
+        if _planner_debug_enabled():
+            logger.debug("planner id expansion: origin_ids=%s dest_ids_expanded=%s", origin_ids, dest_ids_expanded)
 
         radii = [500, 1000]
         window_hours_attempts = [3, 6, 12, None]
@@ -996,7 +1008,11 @@ class JourneyPlanner:
                     for r in bus_trips:
                         trip_origins.setdefault(r["trip_id"], []).append(r)
 
-                    print(f"DEBUG targeted: origin_stop_ids[0]={origin_stop_ids[0]} origin_trips={len(bus_trips_origin)} catch_trips={len(bus_trips_catch)} trip_ids={len(trip_ids)}")
+                    if _planner_debug_enabled():
+                        logger.debug(
+                            "planner targeted candidates: origin_stop=%s origin_trips=%s catch_trips=%s trip_ids=%s",
+                            origin_stop_ids[0], len(bus_trips_origin), len(bus_trips_catch), len(trip_ids)
+                        )
                     journey_dedup = {}  # line_name -> (arrive_dt, journey)
 
                     for trip_id in trip_ids:
@@ -1071,7 +1087,15 @@ class JourneyPlanner:
 
                         if not best_ds or not best_ds_rail:
                             if line_name in ('100', '1', '41', '42'):
-                                print(f"DEBUG {line_name} {trip_id[:12]}: no best_ds, board={board_stop_id} seq={board_seq}, downstream rail stops: {[d['stop_id'] for d in downstream if d['stop_id'] in rail_interchange][:3]}")
+                                if _planner_debug_enabled():
+                                    logger.debug(
+                                        "planner downstream pruned: line=%s trip=%s board=%s seq=%s downstream_rail=%s",
+                                        line_name,
+                                        trip_id[:12],
+                                        board_stop_id,
+                                        board_seq,
+                                        [d['stop_id'] for d in downstream if d['stop_id'] in rail_interchange][:3],
+                                    )
                             continue
 
                         board_r = _resolve(board_stop_id)
@@ -1189,7 +1213,8 @@ class JourneyPlanner:
                         [v[1] for v in journey_dedup.values()],
                         key=lambda j: self._parse_iso(j["arrive_time"]) or datetime.max
                     )
-                    print(f"DEBUG targeted: journey_dedup keys={list(journey_dedup.keys())} all_found={len(all_found)}")
+                    if _planner_debug_enabled():
+                        logger.debug("planner targeted post-filter: journey_keys=%s all_found=%s", list(journey_dedup.keys()), len(all_found))
                     if all_found:
                         best_arr = self._parse_iso(all_found[0]["arrive_time"])
                         all_found = [j for j in all_found
@@ -1283,6 +1308,13 @@ class JourneyPlanner:
 
             origin_exact_usable = any(_has_usable(sid) for sid in origin_ids)
             dest_exact_usable = any(_has_usable(sid) for sid in dest_ids_expanded)
+            if _planner_debug_enabled():
+                logger.debug(
+                    "planner window usability: window=%s origin_exact_usable=%s dest_exact_usable=%s",
+                    wh,
+                    origin_exact_usable,
+                    dest_exact_usable,
+                )
             exact_journeys = []
             try:
                 if origin_exact_usable and dest_exact_usable and use_bus:
@@ -1385,6 +1417,8 @@ class JourneyPlanner:
                                 "legs": [vehicle],
                             }
                         )
+                    if _planner_debug_enabled():
+                        logger.debug("planner exact journeys: count=%s window=%s", len(exact_journeys), wh)
                     
             except NoRouteFoundError:
                 pass
@@ -1701,7 +1735,11 @@ class JourneyPlanner:
 
                     origin_candidates.sort(key=lambda x: (x[0], str(x[1]["stop_id"]), x[2]))
                     seed_cap = 20 if journeys else 50
+                    if _planner_debug_enabled():
+                        logger.debug("planner origin candidates before cap: count=%s seed_cap=%s", len(origin_candidates), seed_cap)
                     origin_candidates = origin_candidates[:seed_cap]
+                    if _planner_debug_enabled():
+                        logger.debug("planner origin candidates after cap: count=%s", len(origin_candidates))
 
                     MAX_STATES = 5000
                     MAX_VEHICLE_LEGS = 3      # hard cap: never suggest more than 3 changes
@@ -2009,6 +2047,8 @@ class JourneyPlanner:
                                 window_end=window_end,
                                 downstream_limit=DOWNSTREAM_LIMIT,
                             )
+                            if _planner_debug_enabled():
+                                logger.debug("planner rail candidates raw: cur_stop=%s count=%s", cur_stop, len(rail_candidates))
                             # Deduplicate: keep only the earliest departure per destination stop
                             # to avoid 100+ candidates for the same journey flooding the heap
                             seen_rail_dst = {}
@@ -2036,6 +2076,14 @@ class JourneyPlanner:
                                     ds_dist = self._haversine_m(ds_lat, ds_lon, dest_lat, dest_lon)
                                     if ds_dist > cur_dist + 15000:
                                         allow_expand = False
+                                        if _planner_debug_enabled():
+                                            logger.debug(
+                                                "planner downstream prune rail: cur_stop=%s ds_id=%s cur_dist=%.2f ds_dist=%.2f",
+                                                cur_stop,
+                                                ds_id,
+                                                cur_dist,
+                                                ds_dist,
+                                            )
 
                                 if not allow_expand:
                                     continue
@@ -2095,10 +2143,8 @@ class JourneyPlanner:
         conn.close()
 
         if not journeys:
-            try:
-                print(f"DEBUG: no route found")
-            except Exception:
-                pass
+            if _planner_debug_enabled():
+                logger.debug("planner no route found")
             raise NoRouteFoundError(f"No routes found between {origin_id} and {destination_id}")
 
         unique = []
@@ -2136,10 +2182,12 @@ class JourneyPlanner:
                 start_dt = self._parse_iso(j.get("depart_time"))
                 end_dt = self._parse_iso(j.get("arrive_time"))
                 if start_dt is None or end_dt is None:
-                    print(f"DEBUG GOOD: skip - start/end None")
+                    if _planner_debug_enabled():
+                        logger.debug("planner validation discard: start/end None")
                     continue
                 if end_dt < start_dt:
-                    print(f"DEBUG GOOD: skip - end<start {start_dt} {end_dt}")
+                    if _planner_debug_enabled():
+                        logger.debug("planner validation discard: end<start start=%s end=%s", start_dt, end_dt)
                     continue
 
                 total = int(j.get("total_duration_min", 0))
@@ -2151,11 +2199,13 @@ class JourneyPlanner:
                     ldep = self._parse_iso(leg.get("depart"))
                     larr = self._parse_iso(leg.get("arrive"))
                     if ldep is None or larr is None or larr < ldep:
-                        print(f"DEBUG GOOD: skip - leg time invalid {leg.get('mode')} {ldep} {larr}")
+                        if _planner_debug_enabled():
+                            logger.debug("planner validation discard: leg time invalid mode=%s depart=%s arrive=%s", leg.get("mode"), ldep, larr)
                         valid_legs = False
                         break
                     if ldep < prev_arr:
-                        print(f"DEBUG GOOD: skip - leg overlap {leg.get('mode')} ldep={ldep} prev_arr={prev_arr}")
+                        if _planner_debug_enabled():
+                            logger.debug("planner validation discard: leg overlap mode=%s ldep=%s prev_arr=%s", leg.get("mode"), ldep, prev_arr)
                         valid_legs = False
                         break
 
@@ -2166,11 +2216,13 @@ class JourneyPlanner:
 
                     if leg.get("mode") in ("bus", "rail"):
                         if dur_secs < 60:
-                            print(f"DEBUG GOOD: skip - leg too short {leg.get('mode')} {dur_secs}s")
+                            if _planner_debug_enabled():
+                                logger.debug("planner validation discard: leg too short mode=%s dur_secs=%s", leg.get("mode"), dur_secs)
                             valid_legs = False
                             break
                         if leg.get("from") == leg.get("to"):
-                            print(f"DEBUG GOOD: skip - from==to {leg.get('from')}")
+                            if _planner_debug_enabled():
+                                logger.debug("planner validation discard: from==to stop=%s", leg.get("from"))
                             valid_legs = False
                             break
 
@@ -2180,14 +2232,18 @@ class JourneyPlanner:
                 if not valid_legs:
                     continue
                 if total <= 0 and leg_sum > 0:
-                    print(f"DEBUG GOOD: skip - total={total} leg_sum={leg_sum}")
+                    if _planner_debug_enabled():
+                        logger.debug("planner validation discard: invalid total total=%s leg_sum=%s", total, leg_sum)
                     continue
                 if abs(total - leg_sum) > 2:
                     j["total_duration_min"] = leg_sum
                 good.append(j)
             except Exception as ex:
-                print(f"DEBUG GOOD: exception {ex}")
+                if _planner_debug_enabled():
+                    logger.debug("planner validation exception: %s", ex)
                 continue
+        if _planner_debug_enabled():
+            logger.debug("planner validation counts: unique=%s good_after_validation=%s", len(unique), len(good))
 
         # Suppress change journeys when a direct route to the SAME destination exists
         # and the change doesn't arrive meaningfully earlier (>10 min saving per change required)

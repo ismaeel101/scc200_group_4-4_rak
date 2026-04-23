@@ -1,5 +1,7 @@
 from datetime import datetime
 from typing import List
+import logging
+import os
 from .weather_stub import get_weather_stub
 from .reliability_dto import ReliabilityExplanation
 from app.cache.live_reader import get_bus_live, get_rail_live
@@ -7,10 +9,19 @@ from .historical_reader import get_historical_stats
 
 HIGH_THRESHOLD = 80
 MEDIUM_THRESHOLD = 50
+NO_HISTORY_BASE_SCORE = 88
+logger = logging.getLogger(__name__)
+
+
+def _debug_enabled() -> bool:
+    return os.environ.get("ENABLE_PLANNER_DEBUG", "").strip().lower() in {"1", "true", "yes", "on"}
 
 def _base_score_from_history(stats):
-    if not stats:
-        return 100, [ReliabilityExplanation(code="HIST_NONE", text="No historical data available.")]
+    if not stats or stats.get("available") is False:
+        return (
+            NO_HISTORY_BASE_SCORE,
+            [ReliabilityExplanation(code="HIST_NONE", text="No historical data available; using a conservative fallback.")],
+        )
 
     on_time_pct = stats["on_time_pct"]
     avg_delay = stats["avg_delay"]
@@ -44,6 +55,59 @@ def _base_score_from_history(stats):
         )
 
     return max(0, min(100, score)), explanations
+
+
+def _apply_connection_penalties(score, journey, explanations):
+    connection_risk = bool(journey.get("has_connection_risk") or journey.get("has_tight_connection"))
+    worst_penalty = 0
+
+    for leg in journey.get("legs", []):
+        slack = leg.get("connection_slack_minutes")
+        if slack is None:
+            continue
+
+        try:
+            slack = float(slack)
+        except Exception:
+            continue
+
+        if slack < 5:
+            worst_penalty = max(worst_penalty, 20)
+            explanations.append(
+                ReliabilityExplanation(
+                    code="CONNECTION_TIGHT",
+                    text=f"Very tight {int(slack)} minute connection - risk of missing a transfer.",
+                )
+            )
+            connection_risk = True
+        elif slack < 10:
+            worst_penalty = max(worst_penalty, 10)
+            explanations.append(
+                ReliabilityExplanation(
+                    code="CONNECTION_WARN",
+                    text=f"Tight {int(slack)} minute connection - may be tight.",
+                )
+            )
+            connection_risk = True
+
+    if connection_risk and worst_penalty == 0:
+        worst_penalty = 10
+        explanations.append(
+            ReliabilityExplanation(
+                code="CONNECTION_RISK",
+                text="One or more legs have a connection risk.",
+            )
+        )
+
+    if connection_risk:
+        explanations.append(
+            ReliabilityExplanation(
+                code="CONNECTION_SUMMARY",
+                text="One or more legs have very tight connections (<5 minutes) — increased risk of missed transfers",
+            )
+        )
+
+    return max(0, score - worst_penalty)
 
 
 def _apply_live_penalties(score, leg, explanations):
@@ -118,6 +182,9 @@ def compute_reliability(journey: dict):
     flags = []
     explanations: List[ReliabilityExplanation] = []
 
+    if _debug_enabled():
+        logger.debug("reliability scoring entry: legs=%s depart_time=%s", len(journey.get("legs", [])), journey.get("depart_time"))
+
     # 1) Live data per leg
     for leg in journey["legs"]:
         mode = leg.get("mode")
@@ -155,25 +222,44 @@ def compute_reliability(journey: dict):
             to_id=first_leg.get("to"),
             depart_time=journey["depart_time"] if isinstance(journey["depart_time"], datetime) else datetime.utcnow(),
         )
+    if _debug_enabled():
+        if not stats:
+            logger.debug("reliability historical stats missing/empty for first_leg=%s", first_leg)
+        else:
+            logger.debug("reliability historical stats present keys=%s", list(stats.keys()) if isinstance(stats, dict) else type(stats))
 
     score, hist_expl = _base_score_from_history(stats)
     explanations.extend(hist_expl)
-    if stats is None:
+    if stats is None or (isinstance(stats, dict) and stats.get("available") is False):
         flags.append("HISTORICAL_MISSING")
 
     # 3) Live penalties
     for leg in journey["legs"]:
         score = _apply_live_penalties(score, leg, explanations)
 
-    # 4) Weather penalty (use journey-level weather when available)
+    # 4) Connection penalties (apply even when historical data is missing)
+    score = _apply_connection_penalties(score, journey, explanations)
+
+    # 5) Weather penalty (use journey-level weather when available)
     score = _apply_weather_penalty(score, explanations, journey)
 
-    # 5) Band
+    # 6) Band
     band = _band_from_score(score)
 
-    # 6) Attach to journey
+    # 7) Attach to journey
     journey["reliability_score"] = score
     journey["reliability_band"] = band
-    journey["reliability_explanations"] = [e.text for e in explanations]
+    # Backwards-compatible key expected by tests / callers
+    journey["reliability_explanation"] = [e.text for e in explanations]
+    journey["reliability_explanations"] = journey["reliability_explanation"]
+
+    if _debug_enabled():
+        logger.debug(
+            "reliability scoring exit: score=%s band=%s explanations=%s flags=%s",
+            score,
+            band,
+            journey["reliability_explanation"],
+            flags,
+        )
 
     return journey, flags

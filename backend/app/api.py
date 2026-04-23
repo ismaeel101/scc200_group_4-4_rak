@@ -4,15 +4,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator, ConfigDict
 from typing import List, Optional, Literal
 from datetime import datetime
+import inspect
 import time
 import sqlite3
 from pathlib import Path
 
 from app.data.stops import StopService
+from app.data.db_paths import find_db_path
 from app.domain.planner.planner import JourneyPlanner
 from app.domain.decision_support.decision_support import DecisionSupport
 from app.cache.cache_service import CacheService
 from app.domain.weather import fetch_weather
+from app.domain.reliability import calculate_reliability
 
 from app.data.exceptions import DataUnavailableError, StaticDataMissingError
 from app.domain.planner.exceptions import PlannerError, NoRouteFoundError
@@ -35,22 +38,8 @@ app.add_middleware(
 
 
 def _find_db_path(*names: str) -> Optional[Path]:
-    """Look for DBs in both likely locations:
-    - repo root
-    - backend folder
-    """
-    here = Path(__file__).resolve()
-    candidates = [
-        here.parents[2],  # repo root if file is backend/app/api.py
-        here.parents[1],  # backend folder
-    ]
-
-    for base in candidates:
-        for name in names:
-            path = base / name
-            if path.exists():
-                return path
-    return None
+    """Backward-compatible wrapper around shared DB path resolver."""
+    return find_db_path(*names)
 
 
 @app.on_event("startup")
@@ -60,7 +49,7 @@ async def validate_bus_stops_on_startup():
         from app.data.validation import validate_bus_stop_resolution
 
         bus_db = _find_db_path("bus.db", "database1.db")
-        stops_db = _find_db_path("stops.db", "optiroute.db")
+        stops_db = _find_db_path("stops.db")
 
         if bus_db and stops_db:
             report = validate_bus_stop_resolution(bus_db, stops_db)
@@ -167,7 +156,17 @@ class Journey(BaseModel):
     reliability_score: int = Field(..., ge=0, le=100)
     reliability_band: Literal["High", "Medium", "Low"]
     reliability_explanation: List[str]
+    reliability_explanations: List[str] = Field(default_factory=list)
+    has_connection_risk: Optional[bool] = None
     legs: List[Leg]
+
+
+class WeatherInfo(BaseModel):
+    available: bool
+    is_adverse: bool
+    description: str
+    temperature_c: Optional[float] = None
+    windspeed_kmh: Optional[float] = None
 
 
 class JourneyResponse(BaseModel):
@@ -261,7 +260,17 @@ def _parse_journey(raw) -> dict:
             parsed["reliability_explanation"] = parsed.pop("reliability_explanations")
         else:
             parsed.pop("reliability_explanations", None)
+        if "has_connection_risk" not in parsed and "has_tight_connection" in parsed:
+            parsed["has_connection_risk"] = parsed["has_tight_connection"]
+        parsed.setdefault("reliability_score", 0)
+        parsed.setdefault("reliability_band", "Low")
+        parsed.setdefault("reliability_explanation", [])
+        parsed.setdefault("reliability_explanations", list(parsed.get("reliability_explanation", [])))
         return parsed
+
+    has_connection_risk = getattr(raw, "has_connection_risk", None)
+    if has_connection_risk is None:
+        has_connection_risk = getattr(raw, "has_tight_connection", None)
 
     return {
         "total_duration_min": raw.total_duration_min,
@@ -270,9 +279,36 @@ def _parse_journey(raw) -> dict:
         "changes": raw.changes,
         "reliability_score": getattr(raw, "reliability_score", 0),
         "reliability_band": getattr(raw, "reliability_band", "Low"),
-        "reliability_explanation": getattr(raw, "reliability_explanation", []),
+        "reliability_explanation": getattr(raw, "reliability_explanation", getattr(raw, "reliability_explanations", [])),
+        "reliability_explanations": getattr(raw, "reliability_explanations", getattr(raw, "reliability_explanation", [])),
+        "has_connection_risk": has_connection_risk,
         "legs": [_parse_leg(leg) for leg in raw.legs],
     }
+
+
+def _weather_is_adverse(weather) -> bool:
+    if weather is None:
+        return False
+    if isinstance(weather, dict):
+        return bool(weather.get("is_adverse", False))
+    return bool(getattr(weather, "is_adverse", False))
+
+
+def _apply_weather_penalty_to_journeys(journeys: List[dict], weather) -> None:
+    if not _weather_is_adverse(weather):
+        return
+
+    penalty_text = "Adverse weather conditions may increase delays"
+    for journey in journeys:
+        score = max(0, int(journey.get("reliability_score", 0)) - 10)
+        explanations = list(journey.get("reliability_explanation") or journey.get("reliability_explanations") or [])
+        if penalty_text not in explanations:
+            explanations.append(penalty_text)
+
+        journey["reliability_score"] = score
+        journey["reliability_band"] = "High" if score >= 80 else ("Medium" if score >= 50 else "Low")
+        journey["reliability_explanation"] = explanations
+        journey["reliability_explanations"] = explanations
 
 
 def get_stop_service() -> StopService:
@@ -303,7 +339,7 @@ async def bus_stop_validation():
         from app.data.validation import validate_bus_stop_resolution
 
         bus_db = _find_db_path("bus.db", "database1.db")
-        stops_db = _find_db_path("stops.db", "optiroute.db")
+        stops_db = _find_db_path("stops.db")
 
         if not bus_db or not stops_db:
             raise HTTPException(status_code=503, detail="Required database files not found")
@@ -354,7 +390,7 @@ async def api_get_stops(
     limit: int = Query(500, ge=1, le=500),
 ):
     """Return stops within the provided bounding box using sqlite3."""
-    db_path = _find_db_path("stops.db", "optiroute.db")
+    db_path = _find_db_path("stops.db")
     if not db_path:
         raise HTTPException(status_code=503, detail="Database file not found")
 
@@ -464,7 +500,7 @@ async def get_stops(
     stop_service: StopService = Depends(get_stop_service),
 ):
     """Autocomplete search endpoint for all transport modes."""
-    db_path = _find_db_path("stops.db", "optiroute.db")
+    db_path = _find_db_path("stops.db")
     if not db_path:
         raise HTTPException(status_code=503, detail="Database file not found")
 
@@ -544,7 +580,7 @@ async def get_departures(
     now = dt.now()
     dep_str = f"{now.hour:02d}:{now.minute:02d}:00"
 
-    stops_db = _find_db_path("stops.db", "optiroute.db")
+    stops_db = _find_db_path("stops.db")
     if not stops_db:
         raise HTTPException(status_code=503, detail="Database file not found")
 
@@ -677,7 +713,7 @@ async def get_leg_stops(
     to_seq: int = Query(..., description="Destination stop sequence number"),
 ):
     """Return intermediate stops between from_seq and to_seq for a given trip."""
-    stops_db = _find_db_path("stops.db", "optiroute.db")
+    stops_db = _find_db_path("stops.db")
     if not stops_db:
         raise HTTPException(status_code=503, detail="Database file not found")
 
@@ -816,8 +852,34 @@ async def plan_journey(
         annotated_journeys, flags = decision_support.annotate(journeys)
         annotated_journeys = [_parse_journey(j) for j in annotated_journeys]
     except DecisionSupportError:
-        annotated_journeys = journeys
+        annotated_journeys = []
+        for j in journeys:
+            rel = calculate_reliability(j.get("legs", []))
+            j["reliability_score"] = rel.score
+            j["reliability_band"] = rel.band
+            j["reliability_explanation"] = list(rel.explanations)
+            j["reliability_explanations"] = list(rel.explanations)
+            j["has_connection_risk"] = getattr(rel, "has_tight_connection", False)
+            annotated_journeys.append(j)
         flags = ["TIMETABLE_ONLY", "LIVE_MISSING", "HISTORICAL_MISSING"]
+
+    weather = None
+    try:
+        weather_result = fetch_weather(0.0, 0.0)
+        weather = await weather_result if inspect.isawaitable(weather_result) else weather_result
+    except Exception:
+        weather = None
+
+    _apply_weather_penalty_to_journeys(annotated_journeys, weather)
+
+    if not flags and annotated_journeys:
+        has_missing_live = any(
+            not j.get("legs")
+            or any(not (leg.get("live_status") or {}).get("available", False) for leg in j.get("legs", []))
+            for j in annotated_journeys
+        )
+        if has_missing_live:
+            flags = ["LIVE_MISSING"]
 
     if sort_by == "time":
         annotated_journeys.sort(
