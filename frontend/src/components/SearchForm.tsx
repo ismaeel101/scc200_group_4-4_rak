@@ -104,6 +104,16 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false, on
     availableStops,
   } = ui;
   const t = translations[language.code] || translations.en;
+  const fromLabel = typeof t.fromLabel === 'string' ? t.fromLabel : 'From';
+  const toLabel = typeof t.toLabel === 'string' ? t.toLabel : 'To';
+  const departLabel = typeof t.depart === 'string' ? t.depart : 'Depart';
+  const arriveLabel = typeof t.arrive === 'string' ? t.arrive : 'Arrive';
+  const dateLabel = typeof t.date === 'string' ? t.date : 'Date';
+  const timeLabel = typeof t.time === 'string' ? t.time : 'Time';
+  const allModesLabel = typeof t.allModes === 'string' ? t.allModes : 'All modes';
+  const busLabel = typeof t.bus === 'string' ? t.bus : 'Bus';
+  const railLabel = typeof t.rail === 'string' ? t.rail : 'Rail';
+  const findRoutesLabel = typeof t.findRoutes === 'string' ? t.findRoutes : 'Find routes';
   const [from, setFrom] = useState('');
   const [fromSuggestions, setFromSuggestions] = useState<Stop[]>([]);
   const [to, setTo] = useState('');
@@ -238,7 +248,7 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false, on
     try {
       console.log("SENDING REQUEST", payload);
       const result = await onSearch(payload as any);
-      if (result && Array.isArray(result)) setJourneys(result);
+      if (Array.isArray(result)) setJourneys(result);
       else setJourneys(null);
     } catch (e) {
       setJourneys(null);
@@ -453,7 +463,7 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false, on
     <form ref={formRef} className="searchform" onSubmit={handleSubmit}>
       <div className="searchform__grid">
         <div className="searchform__field">
-          <label htmlFor="from-input" className="visually-hidden">{t.fromLabel}</label>
+          <label htmlFor="from-input" className="visually-hidden">{fromLabel}</label>
           <div className="searchform__input-wrap">
             <Search className="searchform__input-icon" size={16} aria-hidden />
             <input
@@ -469,7 +479,7 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false, on
               }}
               className="searchform__input searchform__input--with-icon"
               placeholder={t.fromPlaceholder as string}
-              aria-label={t.fromLabel as string}
+              aria-label={fromLabel}
               autoComplete="off"
             />
           </div>
@@ -501,7 +511,7 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false, on
         </div>
 
         <div className="searchform__field">
-          <label htmlFor="to-input" className="visually-hidden">{t.toLabel}</label>
+          <label htmlFor="to-input" className="visually-hidden">{toLabel}</label>
           <div className="searchform__input-wrap">
             <Search className="searchform__input-icon" size={16} aria-hidden />
             <input
@@ -517,7 +527,7 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false, on
               }}
               className="searchform__input searchform__input--with-icon"
               placeholder={t.toPlaceholder as string}
-              aria-label={t.toLabel as string}
+              aria-label={toLabel}
               autoComplete="off"
             />
           </div>
@@ -564,31 +574,31 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false, on
       </div>
 
       <div className="searchform__grid-2">
-        <div className="toggle-wrap" aria-label={`${t.depart} / ${t.arrive}`}>
-          <span className="visually-hidden" id="timeToggleLabel">{t.depart} / {t.arrive}</span>
-          <button aria-pressed={isDepart} aria-labelledby="timeToggleLabel" type="button" className={`toggle-btn ${isDepart ? 'mode__btn--active' : ''}`} onClick={() => setIsDepart(true)}>{t.depart}</button>
-          <button aria-pressed={!isDepart} aria-labelledby="timeToggleLabel" type="button" className={`toggle-btn ${!isDepart ? 'mode__btn--active' : ''}`} onClick={() => setIsDepart(false)}>{t.arrive}</button>
+        <div className="toggle-wrap" aria-label={`${departLabel} / ${arriveLabel}`}>
+          <span className="visually-hidden" id="timeToggleLabel">{departLabel} / {arriveLabel}</span>
+          <button aria-pressed={isDepart} aria-labelledby="timeToggleLabel" type="button" className={`toggle-btn ${isDepart ? 'mode__btn--active' : ''}`} onClick={() => setIsDepart(true)}>{departLabel}</button>
+          <button aria-pressed={!isDepart} aria-labelledby="timeToggleLabel" type="button" className={`toggle-btn ${!isDepart ? 'mode__btn--active' : ''}`} onClick={() => setIsDepart(false)}>{arriveLabel}</button>
         </div>
 
         <div className="searchform__date-time-simple">
-          <label htmlFor="date-input" className="visually-hidden">{t.date}</label>
+          <label htmlFor="date-input" className="visually-hidden">{dateLabel}</label>
           <input
             id="date-input"
             name="date"
             type="date"
             className="searchform__input"
-            aria-label={t.date}
+            aria-label={dateLabel}
             value={selectedDate}
             onChange={(e) => { setDateTouched(true); setSelectedDate(e.target.value); }}
           />
 
-          <label htmlFor="time-input" className="visually-hidden">{t.time}</label>
+          <label htmlFor="time-input" className="visually-hidden">{timeLabel}</label>
           <input
             id="time-input"
             name="time"
             type="time"
             className="searchform__input"
-            aria-label={t.time}
+            aria-label={timeLabel}
             value={selectedTime}
             onChange={(e) => { setTimeTouched(true); setSelectedTime(e.target.value); }}
           />
@@ -602,21 +612,21 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false, on
       <div className="searchform__modes">
         <button type="button" className={`mode__btn ${selectedMode === 'All modes' ? 'mode__btn--active' : ''}`} onClick={() => setSelectedMode('All modes')}>
           <MapPin className="mode__icon" size={18} strokeWidth={2} aria-hidden />
-          {t.allModes}
+          {allModesLabel}
         </button>
         <button type="button" className={`mode__btn ${selectedMode === 'Bus' ? 'mode__btn--active' : ''}`} onClick={() => setSelectedMode('Bus')}>
           <Bus className="mode__icon" size={18} strokeWidth={2} aria-hidden />
-          {t.bus}
+          {busLabel}
         </button>
         <button type="button" className={`mode__btn ${selectedMode === 'Rail' ? 'mode__btn--active' : ''}`} onClick={() => setSelectedMode('Rail')}>
           <Train className="mode__icon" size={18} strokeWidth={2} aria-hidden />
-          {t.rail}
+          {railLabel}
         </button>
       </div>
 
       <div className="searchform__actions">
         <button className="searchform__button" type="submit" disabled={isLoading} aria-disabled={isLoading} aria-busy={isLoading}>
-          {t.findRoutes}
+          {findRoutesLabel}
         </button>
       </div>
 

@@ -14,7 +14,6 @@ import os
 from .exceptions import NoRouteFoundError
 from .models import Journey, Leg, Mode
 from .providers import StopInfo
-from app.data.db_paths import find_db_path
 
 # walking constants
 WALK_MAX_METERS = 800
@@ -28,7 +27,16 @@ CHANGE_TIME_SAVING_THRESHOLD_SECS = 600   # a change must save >=10 min vs direc
 MAX_WALK_TRANSFER_SECS = int(WALK_TRANSFER_MAX_M / WALKING_SPEED_MPS)  # ~857 s ≈ 14 min walk
 logger = logging.getLogger(__name__)
 
-
+def find_db_path(*names: str):
+    from pathlib import Path
+    search_dirs = [Path("/workspace/backend"), Path("/workspace")]
+    for name in names:
+        for d in search_dirs:
+            p = d / name
+            if p.exists():
+                return p
+    return None
+    
 def _planner_debug_enabled() -> bool:
     return os.environ.get("ENABLE_PLANNER_DEBUG", "").strip().lower() in {"1", "true", "yes", "on"}
 

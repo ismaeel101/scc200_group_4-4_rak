@@ -10,7 +10,7 @@ import sqlite3
 from pathlib import Path
 
 from app.data.stops import StopService
-from app.data.db_paths import find_db_path
+
 from app.domain.planner.planner import JourneyPlanner
 from app.domain.decision_support.decision_support import DecisionSupport
 from app.cache.cache_service import CacheService
@@ -38,8 +38,13 @@ app.add_middleware(
 
 
 def _find_db_path(*names: str) -> Optional[Path]:
-    """Backward-compatible wrapper around shared DB path resolver."""
-    return find_db_path(*names)
+    search_dirs = [Path("/workspace/backend"), Path("/workspace")]
+    for name in names:
+        for d in search_dirs:
+            p = d / name
+            if p.exists():
+                return p
+    return None
 
 
 @app.on_event("startup")
