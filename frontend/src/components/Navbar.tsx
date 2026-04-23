@@ -16,7 +16,7 @@ const LANG_OPTIONS: Language[] = [
 
 const Navbar: React.FC = () => {
   const navigate = useNavigate();
-  const { language, setLanguage, highContrast, setHighContrast, largeText, setLargeText, reduceMotion, setReduceMotion, underlineLinks, setUnderlineLinks, dyslexicFont, setDyslexicFont } = useUi();
+  const { language, setLanguage, highContrast, setHighContrast, largeText, setLargeText, reduceMotion, setReduceMotion, underlineLinks, setUnderlineLinks, dyslexicFont, setDyslexicFont, darkMode, setDarkMode } = useUi();
   const [menuOpen, setMenuOpen] = useState(false);
   const [langOpen, setLangOpen] = useState(false);
   const [accOpen, setAccOpen] = useState(false);
@@ -169,6 +169,10 @@ const Navbar: React.FC = () => {
                 <label className="access-row">
                   <input type="checkbox" checked={dyslexicFont} onChange={(e) => setDyslexicFont(e.target.checked)} />
                   <span>Dyslexic Font</span>
+                </label>
+                <label className="access-row">
+                  <input type="checkbox" checked={darkMode} onChange={(e) => setDarkMode(e.target.checked)} />
+                  <span>Dark Mode</span>
                 </label>
               </div>
             )}

@@ -33,46 +33,55 @@ div {
 }
 
 /* Accessibility toggles applied via root classes from UiContext */
-/* 1. Global Reset */
+
+/* 1. Global Reset - MODIFIED to exclude Leaflet map elements */
 .ux-high-contrast,
-.ux-high-contrast * {
+.ux-high-contrast *:not(.leaflet-tile, .leaflet-marker-icon, .leaflet-container, .leaflet-zoom-animated) {
     background-color: #000 !important;
     color: #fff !important;
     border-color: #fff !important;
-    /* Forces all borders to be white */
     box-shadow: none !important;
-    /* Shadows are invisible in high contrast */
 }
 
 /* 2. Fix Interactive Elements */
 .ux-high-contrast a,
 .ux-high-contrast button {
     border: 2px solid #fff !important;
-    /* Gives buttons a clear "box" */
     padding: 4px 8px;
-    /* Ensures the border doesn't hug the text too tight */
     color: #ffff00 !important;
-    /* Yellow links are standard for high contrast */
 }
 
 /* 3. Highlight Hover States */
 .ux-high-contrast a:hover,
 .ux-high-contrast button:hover {
     background-color: #fff !important;
-    /* Invert on hover */
     color: #000 !important;
 }
 
 /* 4. Fix Cards and Containers */
-/* Replace '.card' with whatever class your journey result boxes use */
 .ux-high-contrast .card,
 .ux-high-contrast div[style*="background-color"] {
     border: 1px solid #fff !important;
 }
 
-.ux-high-contrast img,
+/* 5. Map Fix - This replaces your previous img/leaflet rule */
 .ux-high-contrast .leaflet-container {
-    filter: grayscale(1) invert(1) brightness(1.2);
+    background-color: #fff !important;
+    /* Base color for map tiles to sit on */
+    filter: grayscale(1) contrast(1.5);
+    /* High-vis grayscale without full inversion */
+    border: 2px solid #fff !important;
+}
+
+/* Ensures the actual map images (tiles) aren't blacked out */
+.ux-high-contrast .leaflet-tile {
+    background-color: transparent !important;
+}
+
+/* Make map markers pop against the grayscale map */
+.ux-high-contrast .leaflet-marker-icon {
+    filter: brightness(2) saturate(2) !important;
+    border: 2px solid #ffff00 !important;
 }
 
 .ux-large-text {
@@ -101,7 +110,74 @@ div {
     text-decoration: underline !important;
 }
 
-/* Loading overlay */
+/* ============================================================
+   DARK MODE COMPONENT STYLES
+   ============================================================ */
+
+/* 1. ROOT & GLOBAL ELEMENTS */
+.ux-dark-mode,
+.ux-dark-mode body {
+    background-color: #121212 !important;
+    color: #e0e0e0 !important;
+}
+
+/* 2. THE SEARCH PANEL (Plan Your Journey Panel) */
+/* This targets the main white area from your screenshot */
+.ux-dark-mode .searchpage_split {
+    background-color: #1e1e1e !important;
+    color: #ffffff !important;
+    border-right: 1px solid #333 !important;
+}
+
+/* 3. THE "DEEP CLEAN" 
+   Forces all nested containers inside the panel to stop being white */
+.ux-dark-mode .searchpage_split div,
+.ux-dark-mode .searchpage_split section,
+.ux-dark-mode .searchpage_split [class*="container"],
+.ux-dark-mode .searchpage_split [class*="wrapper"],
+.ux-dark-mode .searchpage_split [class*="card"] {
+    background-color: #1e1e1e !important;
+    background: #1e1e1e !important;
+    color: #ffffff !important;
+    box-shadow: none !important;
+    /* Removes "light" shadows */
+}
+
+/* 4. FORM INPUTS & SEARCH BOXES */
+.ux-dark-mode .searchpage_split input,
+.ux-dark-mode .searchpage_split select {
+    background-color: #2d2d2d !important;
+    color: #ffffff !important;
+    border: 1px solid #444 !important;
+}
+
+.ux-dark-mode .searchpage_split input::placeholder {
+    color: #888 !important;
+}
+
+/* 5. INTERACTIVE BUTTONS (Depart/Arrive/All Modes) */
+.ux-dark-mode .searchpage_split button {
+    border: 1px solid #444 !important;
+}
+
+.ux-dark-mode .searchpage_split button:hover {
+    background-color: #3d3d3d !important;
+}
+
+/* 6. THE MAP (Leaflet/Map Container) */
+.ux-dark-mode .leaflet-container,
+.ux-dark-mode .map-container,
+.ux-dark-mode #map {
+    filter: invert(1) hue-rotate(180deg) brightness(0.7) contrast(1.2) !important;
+}
+
+/* 7. NAVBAR ADJUSTMENTS */
+.ux-dark-mode .navbar,
+.ux-dark-mode header {
+    background-color: #1a1a1a !important;
+    border-bottom: 1px solid #333 !important;
+}
+
 .loading-overlay {
     position: fixed;
     inset: 0;

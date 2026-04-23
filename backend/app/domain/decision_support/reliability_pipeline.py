@@ -10,7 +10,7 @@ MEDIUM_THRESHOLD = 50
 
 def _base_score_from_history(stats):
     if not stats:
-        return 70, [ReliabilityExplanation(code="HIST_NONE", text="No historical data available.")]
+        return 100, [ReliabilityExplanation(code="HIST_NONE", text="No historical data available.")]
 
     on_time_pct = stats["on_time_pct"]
     avg_delay = stats["avg_delay"]

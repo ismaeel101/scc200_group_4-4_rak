@@ -16,6 +16,8 @@ type UiContextType = {
     setUnderlineLinks: (val: boolean) => void;
     dyslexicFont: boolean;
     setDyslexicFont: (val: boolean) => void;
+    darkMode: boolean;
+    setDarkMode: (val: boolean) => void;
     // Selected stops from map
     selectedOriginId?: string | null;
     selectedOriginName?: string | null;
@@ -42,6 +44,7 @@ export const UiProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     const [reduceMotion, setReduceMotion] = useState(false);
     const [underlineLinks, setUnderlineLinks] = useState(false);
     const [dyslexicFont, setDyslexicFont] = useState(false);
+    const [darkMode, setDarkMode] = useState(false);
     const [selectedOriginId, setSelectedOriginId] = useState<string | null>(null);
     const [selectedOriginName, setSelectedOriginName] = useState<string | null>(null);
     const [selectedDestinationId, setSelectedDestinationId] = useState<string | null>(null);
@@ -79,8 +82,9 @@ export const UiProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         if (largeText) root.classList.add('ux-large-text'); else root.classList.remove('ux-large-text');
         if (reduceMotion) root.classList.add('ux-reduce-motion'); else root.classList.remove('ux-reduce-motion');
         if (underlineLinks) root.classList.add('ux-underline-links'); else root.classList.remove('ux-underline-links');
-        if (dyslexicFont) root.classList.add('ux-dyslexic-font'); else root.classList.remove('ux-dyslexic-font');
-    }, [highContrast, largeText, reduceMotion, underlineLinks, dyslexicFont]);
+        if (dyslexicFont) root.classList.add('ux-dyslexic-font'); else root.classList.remove('ux-dyslexic-font')
+        if (darkMode) root.classList.add('ux-dark-mode'); else root.classList.remove('ux-dark-mode');
+    }, [highContrast, largeText, reduceMotion, underlineLinks, dyslexicFont, darkMode]);
 
     const value = {
         language,
@@ -95,6 +99,8 @@ export const UiProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         setUnderlineLinks,
         dyslexicFont,
         setDyslexicFont,
+        darkMode,
+        setDarkMode,
         selectedOriginId,
         selectedOriginName,
         setSelectedOrigin: (id: string | null, name: string | null = null) => {

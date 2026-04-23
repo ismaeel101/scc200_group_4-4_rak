@@ -13,7 +13,7 @@ type Props = {
 
 const HomeMap: React.FC<Props> = ({ stops = [], mode = 'all' }) => {
   // Regional centre for North West UK
-  const center: [number, number] = [54.1, -2.5];
+  const center: [number, number] = [54.050, -2.801];
 
   // Bounds roughly covering North West England (lat, lng)
   const maxBounds: [number, number][] = [
