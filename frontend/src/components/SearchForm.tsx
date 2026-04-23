@@ -133,12 +133,10 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false, on
     if (!onSearch) return;
     if (isLoading) return;
     const errors: Record<string, string> = {};
-    // validation: From/To required and not identical
     if (!from.trim()) errors.from = 'Please enter a origin';
     if (!to.trim()) errors.to = 'Please enter a destination';
     if (from.trim() && to.trim() && from.trim().toLowerCase() === to.trim().toLowerCase()) errors.to = 'Origin and destination cannot be the same';
 
-    // date validation
     const now = new Date();
     const selDate = selectedDate ? new Date(selectedDate + 'T00:00:00') : null;
     if (!selDate) errors.date = 'Please select a date';
@@ -147,7 +145,6 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false, on
       if (selDate < today) errors.date = 'Date cannot be in the past';
     }
 
-    // time validation if date is today
     if (!selectedTime) errors.time = 'Please select a time';
     else if (selectedDate) {
       const selectedDateTime = new Date(selectedDate + 'T' + selectedTime + ':00');
@@ -161,8 +158,6 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false, on
     setFieldErrors(errors);
     if (Object.keys(errors).length) return;
 
-    // Resolve origin/destination IDs (AtcoCode) if not already selected
-    // Read latest values directly from context to avoid stale closures
     let origin_id = ui.selectedOriginId;
     let destination_id = ui.selectedDestinationId;
 
@@ -185,9 +180,6 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false, on
       if (exact) destination_id = exact.id;
     }
 
-    // Build ISO datetime
-    // Case 1: user did not touch date/time -> use now
-    // Case 2: user set date/time -> combine selected date + time
     const untouchedDateTime = !dateTouched && !timeTouched;
     let time_iso = '';
     const dtParts = selectedDate.split('-');
@@ -206,9 +198,7 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false, on
         const minute = String(mm).padStart(2, '0');
         time_iso = buildIsoLocal(yyyy, month, day, hour, minute, '00');
       }
-    } catch (e) {
-      // fallback below
-    }
+    } catch (e) { }
 
     if (!time_iso) {
       const ukNow = getUkNowParts();
@@ -227,24 +217,15 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false, on
       time_iso,
       modes,
       max_options: 5,
-      // keep human-readable fields for UI
       from,
       to,
       date: selectedDate,
       time: selectedTime,
     };
 
-    console.log('SELECTED DATE/TIME', {
-      selectedDate,
-      selectedTime,
-      dateTouched,
-      timeTouched,
-      untouchedDateTime,
-      time_iso,
-    });
-
+    console.log('SELECTED DATE/TIME', { selectedDate, selectedTime, dateTouched, timeTouched, untouchedDateTime, time_iso });
     console.log('[SearchForm] payload before validation:', { origin_id: payload.origin_id, destination_id: payload.destination_id });
-    // Ensure we have AtcoCodes (origin_id/destination_id) before searching
+
     if (!payload.origin_id || !payload.destination_id) {
       setFieldErrors((prev) => ({
         ...prev,
@@ -256,7 +237,6 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false, on
 
     try {
       console.log("SENDING REQUEST", payload);
-      console.log('Journey request:', { origin_id: payload.origin_id, destination_id: payload.destination_id });
       const result = await onSearch(payload as any);
       if (result && Array.isArray(result)) setJourneys(result);
       else setJourneys(null);
@@ -278,26 +258,13 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false, on
     setTo('');
     setSelectedOrigin(null, null);
     setSelectedDestination(null, null);
-    setFromSuggestions([]);
-    setToSuggestions([]);
-    setOpenDropdown(null);
-    setActiveFromIndex(-1);
-    setActiveToIndex(-1);
-    setFieldErrors((prev) => {
-      const next = { ...prev };
-      delete next.from;
-      delete next.to;
-      return next;
-    });
   };
 
   useEffect(() => {
-    // set default date/time = tomorrow at 15:00 (UK local)
     setSelectedDate(getUkTomorrowDateString());
     setSelectedTime('15:00');
   }, []);
 
-  // Sync inputs when user selects a stop from the map
   useEffect(() => {
     if (ui.selectedOriginName) setFrom(ui.selectedOriginName);
   }, [ui.selectedOriginName]);
@@ -327,7 +294,6 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false, on
         return (a.stop.name || '').localeCompare(b.stop.name || '');
       });
 
-    // If duplicate names exist, keep routable entries for that name when possible.
     const groupedByName = new Map<string, typeof rows>();
     rows.forEach((row) => {
       const key = row.nameKey;
@@ -370,6 +336,9 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false, on
       type: s.type,
       lat: Number(s.lat),
       lon: Number(s.lon),
+      street: (s as any).street,
+      indicator: (s as any).indicator,
+      town: (s as any).town,
     } as Stop));
 
     const byId = new Map<string, Stop>();
@@ -390,11 +359,7 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false, on
         }
       });
     }, 300);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(t);
-    };
+    return () => { cancelled = true; window.clearTimeout(t); };
   }, [from, validStopIds, availableStops]);
 
   useEffect(() => {
@@ -407,19 +372,13 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false, on
         }
       });
     }, 300);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(t);
-    };
+    return () => { cancelled = true; window.clearTimeout(t); };
   }, [to, validStopIds, availableStops]);
 
   useEffect(() => {
     const onDocPointer = (ev: MouseEvent) => {
       if (!formRef.current) return;
-      if (!formRef.current.contains(ev.target as Node)) {
-        setOpenDropdown(null);
-      }
+      if (!formRef.current.contains(ev.target as Node)) setOpenDropdown(null);
     };
     document.addEventListener('mousedown', onDocPointer);
     return () => document.removeEventListener('mousedown', onDocPointer);
@@ -440,58 +399,28 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false, on
 
   const handleFromKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (!fromSuggestions.length) return;
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      setOpenDropdown('from');
-      setActiveFromIndex((prev) => Math.min(fromSuggestions.length - 1, prev + 1));
-      return;
-    }
-    if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      setOpenDropdown('from');
-      setActiveFromIndex((prev) => Math.max(0, prev - 1));
-      return;
-    }
+    if (e.key === 'ArrowDown') { e.preventDefault(); setOpenDropdown('from'); setActiveFromIndex((prev) => Math.min(fromSuggestions.length - 1, prev + 1)); return; }
+    if (e.key === 'ArrowUp') { e.preventDefault(); setOpenDropdown('from'); setActiveFromIndex((prev) => Math.max(0, prev - 1)); return; }
     if (e.key === 'Enter' && openDropdown === 'from') {
       const idx = activeFromIndex >= 0 ? activeFromIndex : 0;
       const chosen = fromSuggestions[idx];
-      if (chosen) {
-        e.preventDefault();
-        selectFromSuggestion(chosen);
-      }
+      if (chosen) { e.preventDefault(); selectFromSuggestion(chosen); }
       return;
     }
-    if (e.key === 'Escape') {
-      setOpenDropdown(null);
-    }
+    if (e.key === 'Escape') setOpenDropdown(null);
   };
 
   const handleToKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (!toSuggestions.length) return;
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      setOpenDropdown('to');
-      setActiveToIndex((prev) => Math.min(toSuggestions.length - 1, prev + 1));
-      return;
-    }
-    if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      setOpenDropdown('to');
-      setActiveToIndex((prev) => Math.max(0, prev - 1));
-      return;
-    }
+    if (e.key === 'ArrowDown') { e.preventDefault(); setOpenDropdown('to'); setActiveToIndex((prev) => Math.min(toSuggestions.length - 1, prev + 1)); return; }
+    if (e.key === 'ArrowUp') { e.preventDefault(); setOpenDropdown('to'); setActiveToIndex((prev) => Math.max(0, prev - 1)); return; }
     if (e.key === 'Enter' && openDropdown === 'to') {
       const idx = activeToIndex >= 0 ? activeToIndex : 0;
       const chosen = toSuggestions[idx];
-      if (chosen) {
-        e.preventDefault();
-        selectToSuggestion(chosen);
-      }
+      if (chosen) { e.preventDefault(); selectToSuggestion(chosen); }
       return;
     }
-    if (e.key === 'Escape') {
-      setOpenDropdown(null);
-    }
+    if (e.key === 'Escape') setOpenDropdown(null);
   };
 
   const renderHighlightedName = (name: string, query: string) => {
@@ -510,6 +439,16 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false, on
     );
   };
 
+  const renderStopDetail = (s: Stop) => {
+    const parts = [(s as any).indicator, (s as any).street, (s as any).town].filter(Boolean);
+    if (!parts.length) return null;
+    return (
+      <span style={{ fontSize: '11px', color: '#888', display: 'block', marginTop: '1px' }}>
+        {parts.join(', ')}
+      </span>
+    );
+  };
+
   return (
     <form ref={formRef} className="searchform" onSubmit={handleSubmit}>
       <div className="searchform__grid">
@@ -525,9 +464,7 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false, on
               onKeyDown={handleFromKeyDown}
               onChange={(e) => {
                 setFrom(capitalizeWords(e.target.value));
-                if (selectedOriginId) {
-                  setSelectedOrigin(null, null);
-                }
+                if (selectedOriginId) setSelectedOrigin(null, null);
                 setOpenDropdown('from');
               }}
               className="searchform__input searchform__input--with-icon"
@@ -549,6 +486,7 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false, on
                   onClick={() => selectFromSuggestion(s)}
                 >
                   <span>{renderHighlightedName(s.name, from)}</span>
+                  {renderStopDetail(s)}
                 </li>
               ))}
             </ul>
@@ -574,9 +512,7 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false, on
               onKeyDown={handleToKeyDown}
               onChange={(e) => {
                 setTo(capitalizeWords(e.target.value));
-                if (selectedDestinationId) {
-                  setSelectedDestination(null, null);
-                }
+                if (selectedDestinationId) setSelectedDestination(null, null);
                 setOpenDropdown('to');
               }}
               className="searchform__input searchform__input--with-icon"
@@ -598,6 +534,7 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false, on
                   onClick={() => selectToSuggestion(s)}
                 >
                   <span>{renderHighlightedName(s.name, to)}</span>
+                  {renderStopDetail(s)}
                 </li>
               ))}
             </ul>
@@ -606,23 +543,20 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false, on
         </div>
       </div>
 
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '0.25rem' }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
         <button
           type="button"
           onClick={handleClearLocations}
           disabled={isLoading}
           aria-disabled={isLoading}
-          className="searchform__clear"
           style={{
             background: 'transparent',
             border: 'none',
-            color: 'var(--muted, #6b7280)',
+            color: '#64748b',
             font: 'inherit',
-            fontSize: '0.85rem',
-            lineHeight: 1.2,
+            fontSize: '0.88rem',
             padding: 0,
             cursor: isLoading ? 'not-allowed' : 'pointer',
-            opacity: isLoading ? 0.6 : 0.85,
           }}
         >
           Clear
@@ -645,10 +579,7 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false, on
             className="searchform__input"
             aria-label={t.date}
             value={selectedDate}
-            onChange={(e) => {
-              setDateTouched(true);
-              setSelectedDate(e.target.value);
-            }}
+            onChange={(e) => { setDateTouched(true); setSelectedDate(e.target.value); }}
           />
 
           <label htmlFor="time-input" className="visually-hidden">{t.time}</label>
@@ -659,10 +590,7 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, isLoading = false, on
             className="searchform__input"
             aria-label={t.time}
             value={selectedTime}
-            onChange={(e) => {
-              setTimeTouched(true);
-              setSelectedTime(e.target.value);
-            }}
+            onChange={(e) => { setTimeTouched(true); setSelectedTime(e.target.value); }}
           />
 
           {(fieldErrors.date || fieldErrors.time) && (

@@ -102,7 +102,7 @@ const LiveStopLayer: React.FC<{ mode?: 'all' | 'bus' | 'rail' }> = ({ mode = 'al
                     const rows = departures.map((d: any) => `
                         <tr>
                             <td style="padding:3px 8px 3px 0;color:#f59e0b;font-weight:700;font-size:12px;white-space:nowrap;">${d.time}</td>
-                            <td style="padding:3px 8px;color:#60a5fa;font-weight:700;font-size:12px;white-space:nowrap;">${d.line}</td>
+                            <td style="padding:3px 8px;color:#60a5fa;font-weight:700;font-size:12px;white-space:nowrap;">${d.mode === 'rail' ? '🚆' : d.line}</td>
                             <td style="padding:3px 0;color:#f1f5f9;font-size:12px;">${d.destination}</td>
                         </tr>
                     `).join('');

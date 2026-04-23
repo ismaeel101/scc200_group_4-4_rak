@@ -256,15 +256,15 @@
 
 .lines {
   display: flex;
-  gap: 4px;
-  /* slightly tighter */
+  gap: 8px;
+  flex-wrap: wrap;
   align-items: center;
 }
 
 .line {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .line-badge {
@@ -294,7 +294,7 @@
   display: inline-flex;
   align-items: center;
   color: #9ca3af;
-  margin: 0 6px;
+  margin: 0;
 }
 
 .right {

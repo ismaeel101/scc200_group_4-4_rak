@@ -310,10 +310,11 @@ class JourneyPlanner:
             "to_lon": to_lon,
         }
 
-    def _vehicle_leg_dict(self, mode, from_name, to_name, depart_dt, arrive_dt, line=None, from_lat=None, from_lon=None, to_lat=None, to_lon=None, service_id=None, from_seq=None, to_seq=None):
+    def _vehicle_leg_dict(self, mode, from_name, to_name, depart_dt, arrive_dt, line=None, from_lat=None, from_lon=None, to_lat=None, to_lon=None, service_id=None, from_seq=None, to_seq=None, headsign=None):
         return {
             "mode": mode,
             "line": line or "",
+            "headsign": headsign or "",
             "from": from_name,
             "to": to_name,
             "depart": depart_dt.isoformat(),
@@ -326,6 +327,45 @@ class JourneyPlanner:
             "from_seq": from_seq,
             "to_seq": to_seq,
         }
+
+    def _get_headsign(self, conn, trip_id: str, mode: str) -> str:
+        """Return the destination shown on the front of the vehicle (headsign)."""
+        try:
+            if mode == "bus":
+                row = conn.execute(
+                    """
+                    SELECT sp.common_name
+                    FROM bus.stop_times st
+                    JOIN stops sp ON st.stop_id = sp.atco_code
+                    WHERE st.trip_id = ?
+                    AND st.sequence = (SELECT MAX(sequence) FROM bus.stop_times WHERE trip_id = ?)
+                    LIMIT 1
+                    """,
+                    (trip_id, trip_id),
+                ).fetchone()
+                if row and row[0]:
+                    return row[0]
+            elif mode == "rail":
+                # Get last tiploc in schedule then resolve to station name
+                row = conn.execute(
+                    """
+                    SELECT tiploc FROM rail.schedules
+                    WHERE train_uid = ?
+                    AND seq = (SELECT MAX(seq) FROM rail.schedules WHERE train_uid = ?)
+                    LIMIT 1
+                    """,
+                    (trip_id, trip_id),
+                ).fetchone()
+                if row:
+                    name_row = conn.execute(
+                        "SELECT common_name FROM stops WHERE atco_code IN (?, ?) LIMIT 1",
+                        (f"RAIL:{row[0]}", f"9100{row[0]}"),
+                    ).fetchone()
+                    if name_row and name_row[0]:
+                        return name_row[0]
+        except Exception:
+            pass
+        return ""
 
     def _get_rail_candidates_from_stop(
         self,
@@ -1309,6 +1349,7 @@ class JourneyPlanner:
                             service_id=trip,
                             from_seq=o_seq,
                             to_seq=dest_seq,
+                            headsign=self._get_headsign(conn, trip, "bus"),
                         )
                         total_duration = int((arrive_dt - depart_dt).total_seconds() / 60)
                         if total_duration <= 0 and (dest_seq - o_seq) > 0:
@@ -1388,6 +1429,7 @@ class JourneyPlanner:
                                     service_id=rc.get("trip_id"),
                                     from_seq=rc.get("from_seq"),
                                     to_seq=rc.get("to_seq"),
+                                    headsign=self._get_headsign(conn, rc.get("trip_id", ""), "rail"),
                                 )
                                 score, band, explanation = self._compute_reliability([vehicle], total_duration, conn)
                                 rail_direct.append(

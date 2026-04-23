@@ -156,6 +156,7 @@ class Leg(BaseModel):
     service_id: Optional[str] = None
     from_seq: Optional[int] = None
     to_seq: Optional[int] = None
+    headsign: Optional[str] = None
 
 
 class Journey(BaseModel):
@@ -182,6 +183,9 @@ class StopResponse(BaseModel):
     type: Literal["bus", "rail"]
     lat: float
     lon: float
+    street: Optional[str] = None
+    indicator: Optional[str] = None
+    town: Optional[str] = None
 
 
 class StatusResponse(BaseModel):
@@ -224,6 +228,7 @@ def _parse_leg(raw) -> dict:
             "service_id": raw.get("service_id"),
             "from_seq": raw.get("from_seq"),
             "to_seq": raw.get("to_seq"),
+            "headsign": raw.get("headsign"),
         }
 
     return {
@@ -243,6 +248,7 @@ def _parse_leg(raw) -> dict:
         "live_status": _parse_live_status(getattr(raw, "live_status", None)),
         "leg_risk_band": getattr(raw, "leg_risk_band", None),
         "risk_explanation": getattr(raw, "risk_explanation", None),
+        "headsign": getattr(raw, "headsign", None),
     }
 
 
@@ -369,7 +375,8 @@ async def api_get_stops(
         cur = conn.execute(
             """
             SELECT atco_code AS id, common_name AS name, latitude AS lat, longitude AS lon,
-                   CASE WHEN stop_type IN ('RLY', 'RSE', 'TMU', 'MET') THEN 'rail' ELSE 'bus' END as type
+                   CASE WHEN stop_type IN ('RLY', 'RSE', 'TMU', 'MET') THEN 'rail' ELSE 'bus' END as type,
+                   street, indicator, town
             FROM stops
             WHERE latitude BETWEEN ? AND ? AND longitude BETWEEN ? AND ?
             LIMIT ?
@@ -482,7 +489,8 @@ async def get_stops(
         cur = conn.execute(
             f"""
             SELECT atco_code AS id, common_name AS name, latitude AS lat, longitude AS lon,
-                   CASE WHEN stop_type IN ('RLY', 'RSE', 'TMU', 'MET') THEN 'rail' ELSE 'bus' END as type
+                   CASE WHEN stop_type IN ('RLY', 'RSE', 'TMU', 'MET') THEN 'rail' ELSE 'bus' END as type,
+                   street, indicator, town
             FROM stops
             WHERE common_name LIKE ?{nw_filter}
             LIMIT ?
@@ -602,7 +610,7 @@ async def get_departures(
             rail_rows = conn.execute(
                 """
                 SELECT DISTINCT s1.train_uid, s1.departure,
-                       COALESCE(st2.common_name, st3.common_name, s_last.tiploc) AS destination
+                       COALESCE(st2.common_name, st3.common_name) AS destination
                 FROM rail.schedules s1
                 JOIN rail.schedules s_last ON s_last.train_uid = s1.train_uid
                     AND s_last.seq = (SELECT MAX(seq) FROM rail.schedules WHERE train_uid = s1.train_uid)
@@ -620,6 +628,8 @@ async def get_departures(
                 dep_raw = r["departure"].replace("H", "")
                 dep_fmt = f"{dep_raw[:2]}:{dep_raw[2:]}" if len(dep_raw) == 4 else dep_raw
                 dest = (r["destination"] or "").strip()
+                if not dest:
+                    continue  # skip if destination can't be resolved to a readable name
                 results.append({
                     "time": dep_fmt,
                     "line": r["train_uid"] or "",
@@ -645,7 +655,12 @@ async def get_departures(
         dest = (r["destination"] or "").strip().lower()
         if origin_name and dest == origin_name:
             continue
-        key = (r["time"], r["line"], r["destination"])
+        # For rail, dedup by (time, destination) — multiple train_uids = same physical service
+        # For bus, dedup by (time, line, destination)
+        if r["mode"] == "rail":
+            key = (r["time"], r["destination"])
+        else:
+            key = (r["time"], r["line"], r["destination"])
         if key not in seen:
             seen.add(key)
             deduped.append(r)

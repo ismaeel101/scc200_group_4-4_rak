@@ -115,12 +115,18 @@ const ResultsPage: React.FC = () => {
   }, [filteredBySearch]);
 
   const journeysToRender: any[] = Array.isArray(filteredBySearch) ? filteredBySearch : [];
-  const fastestDurationMin = useMemo(() => {
-    const durations = journeysToRender
-      .map((j: any) => Number(j?.total_duration_min))
-      .filter((n: number) => Number.isFinite(n));
-    if (!durations.length) return null;
-    return Math.min(...durations);
+  const fastestJourneyIndex = useMemo(() => {
+    if (!journeysToRender.length) return -1;
+    let fastestIdx = -1;
+    let fastestDuration = Number.POSITIVE_INFINITY;
+    journeysToRender.forEach((j: any, idx: number) => {
+      const duration = Number(j?.total_duration_min);
+      if (Number.isFinite(duration) && duration < fastestDuration) {
+        fastestDuration = duration;
+        fastestIdx = idx;
+      }
+    });
+    return fastestIdx;
   }, [journeysToRender]);
   const activeJourney = selectedJourney || (journeysToRender && journeysToRender[0]) || null;
   const activeLegs = Array.isArray((activeJourney as any)?.legs)
@@ -234,16 +240,7 @@ const ResultsPage: React.FC = () => {
   return (
     <div className="resultspage">
       <div className="resultspage__container">
-        <div className="resultspage__header-row">
-          <h2 className="resultspage__title">{journeyResultsLabel}</h2>
-          <button
-            type="button"
-            className="resultspage__plan-btn"
-            onClick={() => navigate('/')}
-          >
-            Plan Journey
-          </button>
-        </div>
+        <h2 className="resultspage__title">{journeyResultsLabel}</h2>
 
         <div className="resultspage__grid">
           <aside className="resultspage__left">
@@ -266,7 +263,7 @@ const ResultsPage: React.FC = () => {
                   const legs = Array.isArray(j?.legs) ? j.legs : [];
                   const relText = reliabilityText(j);
                   const relClass = reliabilityClass(j);
-                  const isFastest = fastestDurationMin !== null && durationMin === fastestDurationMin;
+                  const isFastest = idx === fastestJourneyIndex;
                   return (
                     <article key={idx} className={`route-card ${selectedJourney === j ? 'route-card--selected' : ''} ${isFastest ? 'route-card--fastest' : ''}`} onClick={() => setSelectedJourney((prev) => (prev === j ? null : j))}>
                       {isFastest && <span className="route-card__fastest-badge">Fastest</span>}
@@ -286,21 +283,24 @@ const ResultsPage: React.FC = () => {
                       </div>
                       <div className="route-card__foot">
                         <div className="route-card__foot-left">
-                          <div className="lines" style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                          <div className="lines">
                             {(legs || []).map((leg: any, i: number) => {
-                              // Skip walking legs if you only want to show vehicles in the summary
-                              if (leg.mode === 'walk') return null;
+                              const mode = (leg?.mode || '').toString().toLowerCase();
+                              const isRail = mode === 'rail' || mode === 'train';
+                              const isBus = mode === 'bus';
+                              const isWalk = mode === 'walk';
+                              const label = isRail ? 'Rail' : isWalk ? 'Walk' : (leg?.line || mode.toUpperCase() || '');
+
                               return (
-                                <span key={i} className="line" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                  <span className="line-badge">
-                                    {(leg.mode === 'rail' || leg.mode === 'train') ? <Train size={16} /> : <Bus size={16} />}
+                                <React.Fragment key={i}>
+                                  <span className="line">
+                                    <span className="line-badge">
+                                      {isRail ? <Train size={16} /> : isBus ? <Bus size={16} /> : isWalk ? <MapPin size={16} /> : <span style={{ width: 16 }} />}
+                                    </span>
+                                    <span className="line-label">{label}</span>
                                   </span>
-                                  <span className="line-label" style={{ fontWeight: 'bold' }}>
-                                    {leg.line || leg.service_id || ''}
-                                  </span>
-                                  {/* Add an arrow between legs if it's not the last vehicle leg */}
-                                  {i < legs.length - 1 && legs[i + 1].mode !== 'walk' && <ArrowRight size={12} className="leg-separator" />}
-                                </span>
+                                  {i < legs.length - 1 && <span className="connect-arrow">→</span>}
+                                </React.Fragment>
                               );
                             })}
                           </div>
@@ -371,7 +371,11 @@ const ResultsPage: React.FC = () => {
                             <div className="leg__left">
                               <span className="leg__icon">{(modeLabel === 'rail' || modeLabel === 'train') ? <Train size={20} /> : modeLabel === 'walk' ? <MapPin size={20} /> : <Bus size={20} />}</span>
                               <div className="leg__meta">
-                                <div className="leg__title">{modeLabel.toUpperCase()}{leg.line ? ` ${leg.line}` : ''}{durationText ? <span className="leg__duration"> ({durationText})</span> : null}</div>
+                                <div className="leg__title">
+                                  {modeLabel.toUpperCase()}{leg.line ? ` ${leg.line}` : ''}
+                                  {leg.headsign ? <span style={{ fontWeight: 400, color: '#6b7280', marginLeft: 6 }}>→ {leg.headsign}</span> : null}
+                                  {durationText ? <span className="leg__duration"> ({durationText})</span> : null}
+                                </div>
                                 <div className="leg__secondary">
                                   <div className="leg__stop leg__stop--from"><MapPin size={14} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 4 }} />{fromLabel}: {fromVal}</div>
 
