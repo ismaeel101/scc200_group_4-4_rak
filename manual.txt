@@ -1,0 +1,103 @@
+OptiRoute — User Manual
+========================
+Group 4-4 | SCC200 Group Project
+
+═══════════════════════════════════════════════════════
+WHAT IS OPTIROUTE?
+═══════════════════════════════════════════════════════
+OptiRoute is a regional public transport journey planner
+for bus and rail services across the North West of England.
+Unlike standard journey planners, OptiRoute shows you how
+reliable each route is, not just how fast it is.
+
+═══════════════════════════════════════════════════════
+PLANNING A JOURNEY
+═══════════════════════════════════════════════════════
+1. Open http://localhost:5173 in your browser
+2. Enter your origin stop or station in the "From" field
+3. Enter your destination in the "To" field
+4. Select a date and time
+5. Choose "Depart at" or "Arrive by"
+6. Select a transport mode: All Modes, Bus, Rail, or Mixed
+7. Click "Find Routes"
+
+═══════════════════════════════════════════════════════
+READING YOUR RESULTS
+═══════════════════════════════════════════════════════
+Each journey result shows:
+- Departure and arrival time
+- Total journey duration
+- Number of changes required
+- Transport mode(s) used
+- Reliability rating: High, Medium, or Low
+
+High  = strong on-time performance record
+Medium = some history of delays
+Low   = frequent delays or disruptions recorded
+
+Click "Show details" on any result to see the full
+leg-by-leg journey breakdown.
+
+═══════════════════════════════════════════════════════
+USING THE MAP
+═══════════════════════════════════════════════════════
+- The map on the right shows your selected route
+- All stops and stations are marked
+- Your selected journey is highlighted on the map
+- Disrupted services are visually marked where data
+  is available
+
+═══════════════════════════════════════════════════════
+RELIABILITY SCORES
+═══════════════════════════════════════════════════════
+Reliability scores are calculated using:
+- Historical on-time performance data
+- Live disruption feeds (where available)
+- Regional weather conditions
+
+These are advisory indicators only and are not
+guaranteed predictions of service performance.
+
+If live data is unavailable, the app automatically
+falls back to scheduled timetable data and displays
+a notice to inform you.
+
+═══════════════════════════════════════════════════════
+WEATHER INFORMATION
+═══════════════════════════════════════════════════════
+Current regional weather conditions are shown as a
+contextual factor alongside reliability scores.
+Adverse weather may reduce the reliability rating
+of affected services.
+
+If weather data is temporarily unavailable, journey
+planning continues to work normally.
+
+═══════════════════════════════════════════════════════
+BUYING TICKETS
+═══════════════════════════════════════════════════════
+OptiRoute does not sell tickets directly.
+Each journey result includes an external link to the
+relevant operator's ticketing website.
+Click the link to be taken to the operator site
+where you can purchase tickets.
+
+═══════════════════════════════════════════════════════
+TIPS
+═══════════════════════════════════════════════════════
+- If your stop name is ambiguous, a dropdown will
+  appear — select the correct stop from the list
+- For multi-leg journeys, check the reliability score
+  of each connection, not just the overall score
+- Use "Mixed" transport mode for the most route options
+- If results seem slow, the app may be fetching live
+  data — wait a moment and results will appear
+
+═══════════════════════════════════════════════════════
+KNOWN LIMITATIONS
+═══════════════════════════════════════════════════════
+- Coverage is limited to the North West region only
+- Walking is only supported as a transfer between stops,
+  not as a standalone journey mode
+- Ticket purchasing is handled externally by operators
+- Live data depends on third-party feed availability

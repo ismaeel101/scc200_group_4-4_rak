@@ -1,87 +1,81 @@
-# OptiRoute 🚌🚆
+OptiRoute — Build & Run Instructions
 
----
+All steps run inside a Dev Container (Docker + VSCode Dev Containers extension required).
+The lab machines have these installed by default.
 
-## Before Anything
+═══════════════════════════════════════════════════════
+STEP 1 — Open in Dev Container
+═══════════════════════════════════════════════════════
+1. Open the unzipped project folder in VSCode
+2. VSCode will automatically prompt: "Reopen in Container" — click it
+   (If not prompted: press Ctrl+Shift+P → type "Reopen in Container" → select it)
+3. Wait for the container to fully build before continuing
 
-1. Open the project folder in VSCode
-2. Press `Ctrl+Shift+P`
-3. Type **Reopen in Container** and select it
-4. Wait for it to fully build, then open a terminal
+═══════════════════════════════════════════════════════
+STEP 2 — Verify databases are present
+═══════════════════════════════════════════════════════
+The following database files are included in the submission.
+Verify they exist before continuing:
 
-> ⚠️ Must be on campus or connected to the **University VPN**
+  /workspace/bus.db
+  /workspace/rail.db
+  /workspace/stops.db
+  /workspace/backend/bus.db
+  /workspace/backend/rail.db
+  /workspace/backend/stops.db
 
----
+═══════════════════════════════════════════════════════
+STEP 3 — Install dependencies
+═══════════════════════════════════════════════════════
+Open a terminal inside the container and run:
 
-## Check Databases Are Present
+  pip install uvicorn sqlalchemy fastapi requests httpx --break-system-packages
 
-The following database files should already be included in the submission. Verify they exist in **both** locations before continuing:
+Then in the same terminal:
 
-```
-/workspace/bus.db
-/workspace/rail.db
-/workspace/stops.db
+  cd /workspace/frontend && npm install
 
-/workspace/backend/bus.db
-/workspace/backend/rail.db
-/workspace/backend/stops.db
-```
+═══════════════════════════════════════════════════════
+STEP 4 — Sync bus stops
+═══════════════════════════════════════════════════════
+Still in the same terminal:
 
-> ⚠️ If any are missing, contact the project team. Do not proceed without all 3 databases in both locations.
+  cd /workspace/backend && python3 sync_bus_stops.py
 
----
+═══════════════════════════════════════════════════════
+STEP 5 — Check port 8000 is free
+═══════════════════════════════════════════════════════
+If port 8000 is already in use, run:
 
-## Step 1 — Install Python Dependencies
+  ss -tlnp | grep 8000
+  kill -9 <PID>
 
-```bash
-pip install uvicorn sqlalchemy fastapi requests httpx --break-system-packages
-```
+(Replace <PID> with the number shown in the output)
 
----
+═══════════════════════════════════════════════════════
+STEP 6 — Start the backend (keep this terminal open)
+═══════════════════════════════════════════════════════
+  cd /workspace/backend
+  PYTHONPATH=/workspace/backend python3 -m uvicorn app.api:app --reload --port 8000
 
-## Step 2 — Install Frontend Dependencies
+Expected output: INFO: Application startup complete.
 
-```bash
-cd /workspace/frontend && npm install
-```
+A popup will appear in the bottom-left of VSCode:
+"Open in Browser" or "Port 8000 forwarded" — this confirms
+the backend server is running and stops are being served.
 
----
+═══════════════════════════════════════════════════════
+STEP 7 — Start the frontend (open a NEW terminal)
+═══════════════════════════════════════════════════════
+Open a second terminal (+ button in the VSCode terminal panel)
 
-## Step 3 — Sync Bus Stops ⚠️ Always run this before starting the server
+  cd /workspace/frontend && npm run dev
 
-```bash
-cd /workspace/backend && python3 sync_bus_stops.py
-```
+Then open: http://localhost:5173
 
----
-
-## Step 4 — Start the Backend
-
-```bash
-cd /workspace/backend
-PYTHONPATH=/workspace/backend python3 -m uvicorn app.api:app --reload --port 8000
-```
-
-✅ You should see:
-```
-INFO: Application startup complete.
-```
-
----
-
-## Step 5 — Start the Frontend (new terminal)
-
-```bash
-cd /workspace/frontend && npm run dev
-```
-
-Open: **http://localhost:5173**
-
----
-
-## Port 8000 Already in Use?
-
-```bash
-ss -tlnp | grep 8000
-kill -9 <PID>
-```
+═══════════════════════════════════════════════════════
+NOTE: No VPN or internet connection is required.
+All data is self-contained within the submission databases.
+Live data feeds will attempt to connect but the app will
+automatically fall back to timetable data if unavailable.
+═══════════════════════════════════════════════════════
